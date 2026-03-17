@@ -1,0 +1,22 @@
+{
+  "rimworld_exe": "D:/Games/RimWorld/Game/RimWorldWin64.exe",
+  "data_root": "D:/Games/RimWorld",
+  "steam_api_key": "",
+  "steamcmd_path": "D:/Games/SteamCMD/steamcmd.exe",
+  "steam_workshop_path": "",
+  "extra_mod_paths": [
+    "D:/Games/RimWorld/mods"
+  ],
+  "download_method": "steamcmd",
+  "is_steam_copy": false,
+  "window": {
+    "width": 1200,
+    "height": 720,
+    "x": 157,
+    "y": 39
+  },
+  "auto_backup_on_launch": true,
+  "backup_count": 3,
+  "steamcmd_username": "",
+  "offered_import": true
+}
