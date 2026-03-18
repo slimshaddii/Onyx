@@ -74,7 +74,7 @@ class LogViewerDialog(QDialog):
 
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
-        self.log_view.setFont(QFont("Consolas", 10))
+        self.log_view.setFont(QFont("Consolas", 12))
         self.log_view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         log_layout.addWidget(self.log_view)
 
@@ -125,11 +125,20 @@ class LogViewerDialog(QDialog):
 
     def _auto_load_log(self):
         instance_path = self.instance.path if self.instance else None
-        log_path = self.log_parser.find_player_log(instance_path)
+        log_path      = self.log_parser.find_player_log(instance_path)
         if log_path:
             self._load_log(log_path)
+            if self.instance:
+                self.log_path_label.setText(
+                    f"📄 {self.instance.name} — {log_path}")
         else:
-            self.log_path_label.setText("No log file found. Launch the game first.")
+            if self.instance:
+                self.log_path_label.setText(
+                    f"No log for '{self.instance.name}'. "
+                    f"Launch the game first.")
+            else:
+                self.log_path_label.setText(
+                    "No log file found. Launch the game first.")
 
     def _on_open_log(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open Log File", "",

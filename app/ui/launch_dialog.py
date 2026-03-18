@@ -1,7 +1,7 @@
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QCheckBox, QLineEdit, QGroupBox, QGridLayout, QMessageBox,
+    QCheckBox, QLineEdit, QGroupBox, QGridLayout,
 )
 
 from app.core.instance import Instance
@@ -13,15 +13,15 @@ from app.ui.detail.save_compat import COMPAT_ICON, COMPAT_COLOR, COMPAT_LABEL
 class LaunchDialog(QDialog):
     def __init__(self, parent, instance: Instance, launcher: Launcher):
         super().__init__(parent)
-        self.instance     = instance
-        self.launcher     = launcher
+        self.instance      = instance
+        self.launcher      = launcher
         self.launch_result = None
-        self._main_window = parent
+        self._main_window  = parent
 
         self.setWindowTitle(f"Launch — {instance.name}")
         self.setMinimumWidth(500)
         self._build()
-        self._check_save_compat()   # Phase 6.3 — check after UI is built
+        self._check_save_compat()
 
     # ── UI construction ───────────────────────────────────────────────────
 
@@ -44,12 +44,9 @@ class LaunchDialog(QDialog):
         info.setLayout(gl)
         lo.addWidget(info)
 
-        # ── Phase 6.3 — save compatibility warning area ───────────────────
+        # ── Save compatibility warning ─────────────────────────────────────
         self.compat_warning = QLabel("")
         self.compat_warning.setWordWrap(True)
-        self.compat_warning.setStyleSheet(
-            "color:#ffaa00; font-weight:bold; padding:4px 6px;"
-            "background:#2a2000; border-radius:4px;")
         self.compat_warning.hide()
         lo.addWidget(self.compat_warning)
 
@@ -58,8 +55,8 @@ class LaunchDialog(QDialog):
         al = QVBoxLayout()
 
         common          = Launcher.get_common_launch_args()
-        self.arg_cbs    = []
-        self.arg_inputs = {}
+        self.arg_cbs:    list[tuple[QCheckBox, dict]] = []
+        self.arg_inputs: dict[str, QLineEdit]         = {}
 
         for a in common:
             row = QHBoxLayout()
@@ -99,10 +96,9 @@ class LaunchDialog(QDialog):
             if arg not in known and arg not in self.arg_inputs:
                 custom_parts.append(arg)
             elif arg in self.arg_inputs:
-                i += 1   # skip the value token
+                i += 1
             i += 1
         self.custom.setText(' '.join(custom_parts))
-        al.addWidget(self.custom)
 
         self.log_cb = QCheckBox("Redirect log to instance")
         self.log_cb.setChecked(True)
@@ -110,8 +106,9 @@ class LaunchDialog(QDialog):
         ag.setLayout(al)
         lo.addWidget(ag)
 
-        self.save_cb = QCheckBox("Remember arguments")
-        self.save_cb.setChecked(True)
+        # ── Remember / skip next time ─────────────────────────────────────
+        self.save_cb = QCheckBox("Remember arguments and skip this dialog next time")
+        self.save_cb.setChecked(self.instance.mods_configured)
         lo.addWidget(self.save_cb)
 
         btns = QHBoxLayout()
@@ -125,29 +122,21 @@ class LaunchDialog(QDialog):
         btns.addWidget(self.launch_btn)
         lo.addLayout(btns)
 
-    # ── Phase 6.3 — save compatibility check ─────────────────────────────
+    # ── Save compat check ─────────────────────────────────────────────────
 
     def _check_save_compat(self):
-        """
-        Inspect all saves and show a warning if any differ from the
-        current active mod list.
-
-        Runs synchronously on dialog open — save headers are small
-        (only <meta> is decompressed) so this is fast enough.
-        """
         saves = self.instance.get_save_files()
         if not saves:
             return
 
-        # Get installed mods for MISSING detection
         all_mod_ids: set[str] = set()
         if self._main_window and hasattr(self._main_window, 'rw'):
             installed   = self._main_window.rw.get_installed_mods()
             all_mod_ids = set(installed.keys())
 
-        active_ids  = list(self.instance.mods)
-        worst       = SaveCompat.COMPATIBLE
-        bad_saves:  list[tuple[str, SaveCompat]] = []
+        active_ids = list(self.instance.mods)
+        worst      = SaveCompat.COMPATIBLE
+        bad_saves: list[tuple[str, SaveCompat]] = []
 
         for s in saves:
             header = parse_save_header(Path(s['path']))
@@ -156,22 +145,17 @@ class LaunchDialog(QDialog):
             compat = compare_save_mods(header, active_ids, all_mod_ids)
             if compat != SaveCompat.COMPATIBLE:
                 bad_saves.append((s['name'], compat))
-                # Track worst compat level (MISSING > CHANGED > COMPATIBLE)
-                if (worst == SaveCompat.COMPATIBLE or
-                        compat == SaveCompat.MISSING):
+                if worst == SaveCompat.COMPATIBLE or compat == SaveCompat.MISSING:
                     worst = compat
 
         if not bad_saves:
             return
 
-        # ── Build warning message ─────────────────────────────────────────
         icon  = COMPAT_ICON[worst]
         color = COMPAT_COLOR[worst]
-
         lines = [f"{icon} Save compatibility warning:"]
         for name, compat in bad_saves[:4]:
-            lines.append(
-                f"  • {name} — {COMPAT_LABEL[compat]}")
+            lines.append(f"  • {name} — {COMPAT_LABEL[compat]}")
         if len(bad_saves) > 4:
             lines.append(f"  … and {len(bad_saves) - 4} more")
 
@@ -197,16 +181,22 @@ class LaunchDialog(QDialog):
         if c:
             extra.extend(c.split())
 
+        # Save args and mark configured when remember is checked
         if self.save_cb.isChecked():
-            self.instance.launch_args = extra
-            self.instance.save()
+            self.instance.launch_args    = extra
+            self.instance.mods_configured = True
+        else:
+            # Unchecking resets the skip-dialog flag
+            self.instance.mods_configured = False
+            self.instance.launch_args     = extra
+        self.instance.save()
 
         from app.core.app_settings import AppSettings
-        _s        = AppSettings.instance()
-        dr        = _s.data_root
-        exe       = _s.rimworld_exe
-        onyx_mods   = Path(dr)  / 'mods' if dr  else None
-        game_mods   = Path(exe).parent / 'Mods' if exe else None
+        _s      = AppSettings.instance()
+        dr      = _s.data_root
+        exe     = _s.rimworld_exe
+        onyx_mods = Path(dr)  / 'mods' if dr  else None
+        game_mods = Path(exe).parent / 'Mods' if exe else None
 
         all_mods = None
         if self._main_window and hasattr(self._main_window, 'rw'):

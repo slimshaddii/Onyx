@@ -6,12 +6,15 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
 
 from app.core.rimworld import ModInfo
+from app.core.app_settings import AppSettings
+from app.ui.styles import get_colors
 
 
 class PreviewPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._current_image_path: str = ''   # track for resize reload
+        self._current_image_path: str = ''
+        c = get_colors(AppSettings.instance().theme)
 
         lo = QVBoxLayout(self)
         lo.setContentsMargins(4, 0, 0, 0)
@@ -22,18 +25,19 @@ class PreviewPanel(QWidget):
         self.img.setMaximumHeight(140)
         self.img.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.img.setStyleSheet(
-            "background:#1a1a1a;border-radius:6px;")
+            f"background:{c['bg_panel']};border-radius:6px;")
         self.img.setText("Select a mod")
         lo.addWidget(self.img)
 
         self.name = QLabel("")
         self.name.setStyleSheet(
-            "font-weight:bold;font-size:12px;color:#74d4cc;")
+            f"font-weight:bold;font-size:12px;color:{c['accent']};")
         self.name.setWordWrap(True)
         lo.addWidget(self.name)
 
         self.meta = QLabel("")
-        self.meta.setStyleSheet("font-size:10px;color:#888;")
+        self.meta.setStyleSheet(
+            f"font-size:10px;color:{c['text_dim']};")
         self.meta.setWordWrap(True)
         lo.addWidget(self.meta)
 
@@ -45,7 +49,8 @@ class PreviewPanel(QWidget):
 
         self.desc = QLabel("")
         self.desc.setWordWrap(True)
-        self.desc.setStyleSheet("font-size:11px;color:#aaa;")
+        self.desc.setStyleSheet(
+            f"font-size:11px;color:{c['text_faint']};")
         self.desc.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse)
         scroll = QScrollArea()
@@ -56,6 +61,8 @@ class PreviewPanel(QWidget):
 
     def show_mod(self, info: ModInfo | None, mid: str,
                  badges: list[tuple[str, str, str, str]]):
+        c = get_colors(AppSettings.instance().theme)
+
         if not info:
             self.name.setText(mid)
             self.meta.setText("❌ Not found on disk")
@@ -82,7 +89,7 @@ class PreviewPanel(QWidget):
             self.issues.setText(html)
         else:
             self.issues.setText(
-                "<span style='color:#4CAF50'>✔ No issues</span>")
+                f"<span style='color:{c['success']}'>✔ No issues</span>")
 
         self.desc.setText(
             info.description[:2000] if info.description else "No description.")
@@ -91,7 +98,6 @@ class PreviewPanel(QWidget):
         self._load_preview_image()
 
     def _load_preview_image(self):
-        """Load and scale the preview image to fit the current widget width."""
         path = self._current_image_path
         if path and Path(path).exists():
             pm = QPixmap(path)
@@ -107,7 +113,6 @@ class PreviewPanel(QWidget):
         self.img.setText("No preview")
 
     def resizeEvent(self, event):
-        """Reload preview image at new size when panel is resized."""
         super().resizeEvent(event)
         if self._current_image_path:
             self._load_preview_image()

@@ -3,18 +3,30 @@ Item creation and badge logic for the mod editor.
 """
 
 from PyQt6.QtCore import Qt
+from app.core.app_settings import AppSettings
+from app.ui.styles import get_colors
 
 from app.ui.modeditor.drag_list import (
     ModItem, COLOR_ROLE, TEXT_ROLE, NEW_ROLE,
 )
 from app.ui.modeditor.issue_checker import get_badges, check_version
 
-COLOR_ERROR      = '#ff4444'
-COLOR_DEPENDENCY = '#ff8800'
-COLOR_WARNING    = '#ff8800'
-COLOR_ORDER      = '#ffaa00'
-COLOR_NEW        = '#74d4cc'
-COLOR_NORMAL     = '#e0e0e0'
+def _theme_colors():
+    c = get_colors(AppSettings.instance().theme)
+    return (
+        c['error'],    # COLOR_ERROR
+        c['warning'],  # COLOR_DEPENDENCY
+        c['warning'],  # COLOR_WARNING
+        c['order'],    # COLOR_ORDER
+        c['accent'],   # COLOR_NEW
+        c['item_normal'],  # COLOR_NORMAL
+    )
+
+
+# Module-level — resolved at import time for the active theme.
+# Re-import or call _theme_colors() directly if theme can switch at runtime.
+def _get_color(key: str) -> str:
+    return get_colors(AppSettings.instance().theme)[key]
 
 _SEVERITY_RANK = {
     'error':       0,
@@ -41,7 +53,7 @@ class ItemBuilder:
 
     def _badge_color(self, badges: list) -> str:
         if not badges:
-            return COLOR_NORMAL
+            return _get_color('item_normal')
         worst = min(badges, key=lambda b: _SEVERITY_RANK.get(b[2], 99))
         return worst[1]
 
@@ -70,7 +82,7 @@ class ItemBuilder:
         if skip_badges:
             self.active.addItem(
                 self._make_item(label, mid,
-                                COLOR_NEW if is_new else COLOR_NORMAL,
+                                _get_color('accent') if is_new else _get_color('item_normal'),
                                 '', is_new))
             return
 
@@ -82,14 +94,14 @@ class ItemBuilder:
                                   ignored_deps=ignored_deps)
 
         if not self.all_mods.get(mid):
-            color, tip = COLOR_ERROR, "Not on disk"
+                color, tip = _get_color('error'), "Not on disk"
         elif badges:
             color = self._badge_color(badges)
             tip   = '\n'.join(b[3] for b in badges)
         elif is_new:
-            color, tip = COLOR_NEW, "Newly added to this instance"
+            color, tip = _get_color('accent'), "Newly added to this instance"
         else:
-            color, tip = COLOR_NORMAL, ''
+            color, tip = _get_color('item_normal'), ''
 
         self.active.addItem(
             self._make_item(label, mid, color, tip, is_new))
@@ -130,14 +142,14 @@ class ItemBuilder:
                                 ignored_deps=ignored_deps)
 
             if not self.all_mods.get(mid):
-                color, tip = COLOR_ERROR, "Not on disk"
+                color, tip = _get_color('error'), "Not on disk"
             elif badges:
                 color = self._badge_color(badges)
                 tip   = '\n'.join(b[3] for b in badges)
             elif is_new:
-                color, tip = COLOR_NEW, "Newly added to this instance"
+                color, tip = _get_color('accent'), "Newly added to this instance"
             else:
-                color, tip = COLOR_NORMAL, ''
+                color, tip = _get_color('item_normal'), ''
 
             # Update ModItem directly — model notifies view
             it.text    = label
@@ -163,14 +175,15 @@ class ItemBuilder:
         label = f"{src} {info.name}  [{mid}]".strip()
 
         if not ver_ok:
-            color = COLOR_WARNING
+            color = _get_color('warning')
             tip   = f"Supports: {', '.join(info.supported_versions)}"
         elif is_new:
-            color = COLOR_NEW
+            color = _get_color('accent')
             tip   = "New mod — not yet used in any instance"
         else:
-            color = COLOR_NORMAL
+            color = _get_color('item_normal')
             tip   = ''
+
 
         self.avail.addItem(
             self._make_item(label, mid, color, tip, is_new))
@@ -179,4 +192,4 @@ class ItemBuilder:
         label = f"❌ {mid}  [not on disk]"
         tip   = "This mod is in the instance but not found on disk"
         self.avail.addItem(
-            self._make_item(label, mid, COLOR_ERROR, tip, False))
+            self._make_item(label, mid, _get_color('error'), tip, False))

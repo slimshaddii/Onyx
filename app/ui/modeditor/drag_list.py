@@ -269,26 +269,33 @@ class ModDelegate(QStyledItemDelegate):
         return QSize(option.rect.width(), self._ROW_H)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem,
-              index: QModelIndex):
+            index: QModelIndex):
         painter.save()
 
+        from app.core.app_settings import AppSettings
+        from app.ui.styles import get_colors
+        c = get_colors(AppSettings.instance().theme)
+
         rect   = option.rect
-        color  = index.data(COLOR_ROLE) or '#e0e0e0'
+        color  = index.data(COLOR_ROLE) or c['item_normal']
         text   = index.data(TEXT_ROLE)  or ''
         is_new = bool(index.data(NEW_ROLE))
 
-        # ── Selection / hover background ──────────────────────────────────────
+        # ── Selection / hover / normal background ─────────────────────────
         if option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(rect, QColor('#2a4a48'))
+            bg = QColor(c['accent'])
+            bg.setAlpha(60)
+            painter.fillRect(rect, bg)
         elif option.state & QStyle.StateFlag.State_MouseOver:
-            painter.fillRect(rect, QColor('#2a2a2a'))
+            bg = QColor(c['bg_mid'])
+            painter.fillRect(rect, bg)
         else:
-            painter.fillRect(rect, QColor('#1a1a1a'))
+            painter.fillRect(rect, QColor(c['bg_panel']))
 
-        x = rect.left() + 4
+        x  = rect.left() + 4
         cy = rect.center().y()
 
-        # ── Colored dot ───────────────────────────────────────────────────────
+        # ── Colored dot ───────────────────────────────────────────────────
         painter.setPen(QColor(color))
         dot_font = painter.font()
         dot_font.setPointSize(7)
@@ -297,7 +304,7 @@ class ModDelegate(QStyledItemDelegate):
         painter.drawText(dot_rect, Qt.AlignmentFlag.AlignCenter, '●')
         x += self._DOT_W + self._SPACING
 
-        # ── [NEW] pill — measure first so name knows available width ──────────
+        # ── [NEW] pill ────────────────────────────────────────────────────
         pill_w = 0
         if is_new:
             pill_font = painter.font()
@@ -311,21 +318,20 @@ class ModDelegate(QStyledItemDelegate):
             pill_rect = QRect(pill_x, pill_y, pill_w, pill_h)
 
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor('#74d4cc'))
+            painter.setBrush(QColor(c['accent']))
             painter.drawRoundedRect(pill_rect, 3, 3)
 
-            painter.setPen(QColor('#1a1a1a'))
+            painter.setPen(QColor(c['bg']))
             painter.setFont(pill_font)
             painter.drawText(pill_rect, Qt.AlignmentFlag.AlignCenter, 'NEW')
+            pill_w += self._SPACING
 
-            pill_w += self._SPACING   # add gap between pill and name
-
-        # ── Mod name ──────────────────────────────────────────────────────────
+        # ── Mod name ──────────────────────────────────────────────────────
         name_font = painter.font()
         name_font.setPointSize(9)
         name_font.setBold(False)
         painter.setFont(name_font)
-        painter.setPen(QColor('#e0e0e0'))
+        painter.setPen(QColor(c['text']))
 
         available_w = rect.right() - x - pill_w - 4
         name_rect   = QRect(x, rect.top(), available_w, rect.height())
@@ -552,6 +558,10 @@ class DragDropList(QListView):
                           else self._model.rowCount())
 
             # Rebuild source without moved items
+            from app.core.app_settings import AppSettings
+            from app.ui.styles import get_colors
+            _c = get_colors(AppSettings.instance().theme)
+
             src_snap = [d for d in src._snapshot_items()
                         if d['mid'] not in move_mids]
             src._model.clear()
@@ -560,12 +570,10 @@ class DragDropList(QListView):
                     text=d['text'], mid=d['mid'], color=d['color'],
                     is_new=d.get('is_new', False), tooltip=d['tooltip']))
 
-            # Insert moved items at drop position with neutral color
-            # (badge refresh will set the real color)
             for i, it in enumerate(move_items):
                 new_item = ModItem(
                     text=it.text, mid=it.mid,
-                    color='#e0e0e0', is_new=False,
+                    color=_c['item_normal'], is_new=False,
                     tooltip=it.tooltip)
                 row = drop_row + i
                 if row >= self._model.rowCount():

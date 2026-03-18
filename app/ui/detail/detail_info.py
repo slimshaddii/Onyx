@@ -17,6 +17,9 @@ from app.core.instance import Instance
 from app.core.rimworld import RimWorldDetector
 from app.utils.file_utils import human_size, get_folder_size
 
+from app.core.app_settings import AppSettings
+from app.ui.styles import get_colors
+
 
 _ROWS = (
     'Version', 'Active Mods', 'Inactive Mods', 'Save Files',
@@ -37,9 +40,11 @@ class DetailInfo(QWidget):
         grid.setVerticalSpacing(6)
 
         self._labels: dict[str, QLabel] = {}
+        c = get_colors(AppSettings.instance().theme)
         for row, key in enumerate(_ROWS):
             lbl = QLabel(f"{key}:")
-            lbl.setStyleSheet("font-weight:bold; color:#8a8ea0;")
+            lbl.setStyleSheet(
+                f"font-weight:bold; color:{c['text_dim']};")
             val = QLabel("—")
             grid.addWidget(lbl, row, 0)
             grid.addWidget(val, row, 1)

@@ -1,27 +1,35 @@
 """
 Topological sort for RimWorld mod load order.
-Tiered approach:
-  Tier 0:  Mods that load BEFORE Core (auto-detected via loadBefore)
-  Tier 1a: Core
-  Tier 1b: Mods that load after Core but before DLCs (auto-detected)
-  Tier 1c: DLCs (fixed canonical order)
-  Tier 2:  All regular mods (topologically sorted)
-  Tier 3:  Mods that should load last
+
+Tier detection is FULLY DYNAMIC — nothing is hardcoded.
+
+  Tier 0  : Pre-patchers + Core + DLCs
+             Detected by: mod.load_first == True  (loadBefore ludeon.rimworld)
+             Core and DLCs are always tier 0 by package-id identity only.
+
+  Tier 1  : Framework / library mods
+             Detected by: a mod is a dependency of 2+ other active mods
+             AND has no dependencies of its own in tier 2
+             (i.e. it is a "root" that many things depend on).
+
+  Tier 2  : All regular mods (default bucket)
+
+  Tier 3  : Load-last mods
+             Detected by: mod.load_last == True
+             (set when a mod declares loadBefore on nothing but has
+             many others declaring loadBefore on IT — future XML tag support)
+
+Dependency priority (from community feedback):
+  forced_dependencies  → always required, additive
+  modDependenciesByVersion > modDependencies  (mutually exclusive per version)
 """
 
-from collections import defaultdict, deque
+from toposort import toposort, CircularDependencyError
+
 from app.core.rimworld import RimWorldDetector, ModInfo
 
-# Seed set — auto-detection will catch anything with loadBefore: Core,
-# but seeding known patchers avoids a first-open edge case where the mod
-# hasn't been scanned yet.
-KNOWN_TIER_ZERO = {
-    'zetrith.prepatcher',
-    'brrainz.harmony',
-}
-
+# ── Only these are identity-based (they have no About.xml loadBefore rule) ───
 CORE = 'ludeon.rimworld'
-
 DLCS = [
     'ludeon.rimworld.royalty',
     'ludeon.rimworld.ideology',
@@ -29,205 +37,366 @@ DLCS = [
     'ludeon.rimworld.anomaly',
     'ludeon.rimworld.odyssey',
 ]
-
 DLCS_SET          = set(DLCS)
 CORE_AND_DLCS_SET = {CORE} | DLCS_SET
 
-KNOWN_TIER_THREE = {
-    'krkr.rocketman',
-    'brrainz.autopatcher',
-}
+# Minimum number of active mods that must depend on X for X to be tier 1
+_FRAMEWORK_THRESHOLD = 2
 
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Public entry point
+# ═════════════════════════════════════════════════════════════════════════════
 
 def auto_sort_mods(mod_ids: list[str], rw: RimWorldDetector) -> list[str]:
-    installed = rw.get_installed_mods()
-    id_set    = set(mod_ids)
+    """Return a sorted copy of *mod_ids* respecting RimWorld load order."""
+    installed  = rw.get_installed_mods()
+    active_set = set(mod_ids)
 
-    # ── Tier 0: anything with loadBefore Core ────────────────────────────
-    tier_zero_ids = set(KNOWN_TIER_ZERO)
-    for mid in mod_ids:
-        info = installed.get(mid)
-        if info and any(d.lower() == CORE for d in info.load_before):
-            tier_zero_ids.add(mid)
+    # ── Build graphs ──────────────────────────────────────────────────────
+    dep_graph  = _build_dep_graph(active_set, installed)
+    rdep_graph = _build_rdep_graph(dep_graph, active_set)
 
-    tier_zero_ids = _expand_deps_into_tier(
-        tier_zero_ids, installed, id_set, CORE_AND_DLCS_SET)
+    # ── Classify tiers ────────────────────────────────────────────────────
+    tier_zero_ids  = _collect_tier_zero(active_set, installed, dep_graph)
+    tier_three_ids = _collect_tier_three(active_set, installed,
+                                         rdep_graph, tier_zero_ids)
+    tier_one_ids   = _collect_tier_one(active_set, dep_graph, rdep_graph,
+                                        tier_zero_ids, tier_three_ids)
 
-    # ── Tier 1b: after Core AND before any DLC ───────────────────────────
-    tier_1b_ids: set[str] = set()
-    for mid in mod_ids:
-        if mid in tier_zero_ids or mid in CORE_AND_DLCS_SET:
-            continue
-        info = installed.get(mid)
-        if not info:
-            continue
-        if (CORE in {d.lower() for d in info.load_after} and
-                any(d.lower() in DLCS_SET for d in info.load_before)):
-            tier_1b_ids.add(mid)
-
-    tier_1b_ids = _expand_deps_into_tier(
-        tier_1b_ids, installed, id_set,
-        CORE_AND_DLCS_SET | tier_zero_ids)
-
-    # ── Bucket every mod ─────────────────────────────────────────────────
-    t0, t1a, t1b, t1c, t2, t3 = [], [], [], [], [], []
-    for mid in mod_ids:
-        if mid in tier_zero_ids and mid not in CORE_AND_DLCS_SET:
-            t0.append(mid)
-        elif mid == CORE:
-            t1a.append(mid)
-        elif mid in tier_1b_ids:
-            t1b.append(mid)
-        elif mid in DLCS_SET:
-            t1c.append(mid)
-        elif mid in KNOWN_TIER_THREE:
-            t3.append(mid)
-        else:
-            t2.append(mid)
+    # ── Bucket ────────────────────────────────────────────────────────────
+    t0, t1, t2, t3 = _bucket(mod_ids,
+                               tier_zero_ids, tier_one_ids, tier_three_ids)
 
     # ── Sort each tier ────────────────────────────────────────────────────
-    s0  = _topo_sort_tier(t0,  installed, id_set)
-    s1a = t1a                                           # just Core
-    s1b = _topo_sort_tier(t1b, installed, id_set)
-    s1c = [d for d in DLCS if d in set(t1c)]           # canonical DLC order
-    s2  = _topo_sort_tier(t2,  installed, id_set)
-    s3  = _topo_sort_tier(t3,  installed, id_set)
+    s0 = _reorder_tier_zero(_sort_tier_list(t0, dep_graph, installed))
+    s1 = _sort_tier_list(t1, dep_graph, installed)
+    s2 = _sort_tier_list(t2, dep_graph, installed)
+    s3 = _sort_tier_list(t3, _trim_graph(dep_graph, set(t3)), installed)
 
-    result = s0 + s1a + s1b + s1c + s2 + s3
-
-    violations = _count_violations(result, installed)
-
+    # ── Deduplicate (safety net) ──────────────────────────────────────────
+    seen:   set[str]  = set()
+    result: list[str] = []
+    for mid in s0 + s1 + s2 + s3:
+        if mid not in seen:
+            seen.add(mid)
+            result.append(mid)
     return result
 
 
-def _expand_deps_into_tier(tier_ids: set[str], installed: dict[str, ModInfo],
-                            active_set: set[str],
-                            exclude: set[str]) -> set[str]:
-    """Pull direct dependencies of tier members into the same tier."""
-    expanded  = set(tier_ids)
-    queue     = list(tier_ids)
-    processed: set[str] = set()
+# ═════════════════════════════════════════════════════════════════════════════
+# Graph builders
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _all_deps(info: ModInfo) -> list[str]:
+    """
+    Return the effective dependency list for sorting purposes.
+    forced_dependencies are always included.
+    Regular dependencies (already version-resolved in ModInfo) are included.
+    Both feed into loadAfter semantics: "load me AFTER these".
+    """
+    seen:   set[str]  = set()
+    result: list[str] = []
+    for pid in (*info.forced_dependencies,
+                *info.dependencies,
+                *info.load_after):
+        pl = pid.lower()
+        if pl not in seen:
+            seen.add(pl)
+            result.append(pl)
+    return result
+
+
+def _build_dep_graph(
+    active_set: set[str],
+    installed:  dict[str, ModInfo],
+) -> dict[str, set[str]]:
+    """
+    Forward graph: { mid: {must_load_before_mid} }
+
+    Rules applied:
+      • forced_deps + deps + loadAfter  → mid loads AFTER them
+      • loadBefore X                    → X loads AFTER mid
+                                          (add mid to X's dep set)
+    """
+    graph: dict[str, set[str]] = {mid: set() for mid in active_set}
+
+    for mid in active_set:
+        info = installed.get(mid)
+        if not info:
+            continue
+
+        for dep in _all_deps(info):
+            if dep in active_set and dep != mid:
+                graph[mid].add(dep)
+
+        for before in info.load_before:
+            bl = before.lower()
+            if bl in active_set and bl != mid:
+                graph[bl].add(mid)   # bl must load after mid
+
+    return graph
+
+
+def _build_rdep_graph(
+    dep_graph:  dict[str, set[str]],
+    active_set: set[str],
+) -> dict[str, set[str]]:
+    """
+    Reverse graph derived from dep_graph.
+    { mid: {mods_that_load_after_mid} }
+    """
+    rgraph: dict[str, set[str]] = {mid: set() for mid in active_set}
+    for mid, deps in dep_graph.items():
+        for dep in deps:
+            if dep in rgraph:
+                rgraph[dep].add(mid)
+    return rgraph
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Tier classifiers — all dynamic
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _collect_tier_zero(
+    active_set: set[str],
+    installed:  dict[str, ModInfo],
+    dep_graph:  dict[str, set[str]],
+) -> set[str]:
+    """
+    Tier 0 = Core + DLCs (by identity) + any mod whose About.xml sets
+    load_first=True (loadBefore ludeon.rimworld) + their recursive deps.
+    """
+    seeds: set[str] = set()
+
+    for mid in active_set:
+        if mid in CORE_AND_DLCS_SET:
+            seeds.add(mid)
+            continue
+        info = installed.get(mid)
+        if info and info.load_first:
+            seeds.add(mid)
+
+    return _expand_forward(seeds, dep_graph, active_set)
+
+
+def _collect_tier_three(
+    active_set:    set[str],
+    installed:     dict[str, ModInfo],
+    rdep_graph:    dict[str, set[str]],
+    tier_zero_ids: set[str],
+) -> set[str]:
+    """
+    Tier 3 = mods whose About.xml sets load_last=True + their
+    reverse-dependents (mods that must load before them pull them last too).
+    Excludes anything already in tier 0.
+    """
+    seeds: set[str] = set()
+    for mid in active_set:
+        if mid in tier_zero_ids:
+            continue
+        info = installed.get(mid)
+        if info and info.load_last:
+            seeds.add(mid)
+
+    expanded = _expand_reverse(seeds, rdep_graph, active_set)
+    return expanded - tier_zero_ids
+
+
+def _collect_tier_one(
+    active_set:     set[str],
+    dep_graph:      dict[str, set[str]],
+    rdep_graph:     dict[str, set[str]],
+    tier_zero_ids:  set[str],
+    tier_three_ids: set[str],
+) -> set[str]:
+    """
+    Tier 1 = mods that behave as frameworks/libraries, detected dynamically:
+
+      A mod is tier 1 when ALL of:
+        1. Not already in tier 0 or tier 3
+        2. At least _FRAMEWORK_THRESHOLD other active mods depend on it
+        3. It has no tier-2 dependencies of its own
+           (i.e. all its own deps are already tier 0)
+
+    Rule 3 prevents pulling in large dependency chains into tier 1 and
+    keeps only true "root library" mods here.
+    """
+    exclude = tier_zero_ids | tier_three_ids
+    tier_one: set[str] = set()
+
+    for mid in active_set:
+        if mid in exclude:
+            continue
+
+        # How many active mods load after this one?
+        dependent_count = len(rdep_graph.get(mid, set()) - exclude)
+        if dependent_count < _FRAMEWORK_THRESHOLD:
+            continue
+
+        # Does this mod have any non-tier-0 deps itself?
+        own_deps = dep_graph.get(mid, set()) - tier_zero_ids
+        if own_deps:
+            continue
+
+        tier_one.add(mid)
+
+    # Pull in their deps (which must also be frameworks, or already tier 0)
+    return _expand_forward(tier_one, dep_graph, active_set) - exclude
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Graph helpers
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _expand_forward(
+    seeds:      set[str],
+    dep_graph:  dict[str, set[str]],
+    active_set: set[str],
+) -> set[str]:
+    """BFS: expand seeds by following forward dependency edges."""
+    result:    set[str]  = set(seeds)
+    queue:     list[str] = list(seeds)
+    processed: set[str]  = set()
 
     while queue:
         mid = queue.pop()
         if mid in processed:
             continue
         processed.add(mid)
-
-        info = installed.get(mid)
-        if not info:
-            continue
-
-        for dep in info.dependencies:
-            dep_l = dep.lower()
-            if dep_l in active_set and dep_l not in exclude and dep_l not in expanded:
-                expanded.add(dep_l)
-                queue.append(dep_l)
-
-    return expanded
-
-
-def _topo_sort_tier(tier_mods: list[str], installed: dict[str, ModInfo],
-                    all_active: set[str]) -> list[str]:
-    if len(tier_mods) <= 1:
-        return list(tier_mods)
-
-    tier_set = set(tier_mods)
-
-    # Build directed graph: edge A→B means B must come after A
-    graph: dict[str, set[str]] = defaultdict(set)
-    for mid in tier_mods:
-        info = installed.get(mid)
-        if not info:
-            continue
-
-        # Combine loadAfter + dependencies (both say "I need X before me")
-        must_after: set[str] = set()
-        for dep in (*info.load_after, *info.dependencies):
-            dep_l = dep.lower()
-            if dep_l in tier_set:
-                must_after.add(dep_l)
-        for dep_l in must_after:
-            graph[dep_l].add(mid)          # dep_l → mid
-
-        # loadBefore: I must come before X
-        for dep in info.load_before:
-            dep_l = dep.lower()
-            if dep_l in tier_set:
-                graph[mid].add(dep_l)      # mid → dep_l
-
-    # Kahn's algorithm with alphabetical tie-breaking
-    in_degree = {mid: 0 for mid in tier_mods}
-    for neighbors in graph.values():
-        for nb in neighbors:
-            if nb in in_degree:
-                in_degree[nb] += 1
-
-    ready: deque[str] = deque(
-        sorted([m for m in tier_mods if in_degree[m] == 0],
-               key=lambda x: _mod_name(x, installed))
-    )
-
-    result: list[str] = []
-    while ready:
-        node = ready.popleft()
-        result.append(node)
-        for nb in sorted(graph.get(node, set()),
-                         key=lambda x: _mod_name(x, installed)):
-            if nb in in_degree:
-                in_degree[nb] -= 1
-                if in_degree[nb] == 0:
-                    _insort_deque(ready, nb, installed)
-
-    # Remaining = circular deps — append alphabetically
-    placed = set(result)
-    remaining = sorted([m for m in tier_mods if m not in placed],
-                       key=lambda x: _mod_name(x, installed))
-    result.extend(remaining)
-
+        for dep in dep_graph.get(mid, set()):
+            if dep in active_set and dep not in result:
+                result.add(dep)
+                queue.append(dep)
     return result
 
 
-def _insort_deque(queue: deque, item: str, installed: dict) -> None:
-    """Insert item into queue maintaining alphabetical order by mod name."""
-    name = _mod_name(item, installed)
-    for i, existing in enumerate(queue):
-        if _mod_name(existing, installed) > name:
-            queue.insert(i, item)
-            return
-    queue.append(item)
+def _expand_reverse(
+    seeds:      set[str],
+    rdep_graph: dict[str, set[str]],
+    active_set: set[str],
+) -> set[str]:
+    """BFS: expand seeds by following reverse dependency edges."""
+    result:    set[str]  = set(seeds)
+    queue:     list[str] = list(seeds)
+    processed: set[str]  = set()
 
-
-def _mod_name(mid: str, installed: dict) -> str:
-    info = installed.get(mid)
-    return info.name.lower() if info else mid
-
-
-def _count_violations(order: list[str], installed: dict) -> int:
-    pos        = {mid: i for i, mid in enumerate(order)}
-    violations = 0
-    seen: set[tuple] = set()
-
-    for mid in order:
-        info = installed.get(mid)
-        if not info:
+    while queue:
+        mid = queue.pop()
+        if mid in processed:
             continue
-        my_pos = pos[mid]
+        processed.add(mid)
+        for rdep in rdep_graph.get(mid, set()):
+            if rdep in active_set and rdep not in result:
+                result.add(rdep)
+                queue.append(rdep)
+    return result
 
-        checks: set[tuple[str, str]] = set()
-        for dep in (*info.load_after, *info.dependencies):
-            checks.add(('after', dep.lower()))
-        for dep in info.load_before:
-            checks.add(('before', dep.lower()))
 
-        for direction, dep_l in checks:
-            key = (mid, dep_l, direction)
-            if key in seen or dep_l not in pos:
-                continue
-            seen.add(key)
-            if direction == 'after'  and pos[dep_l] > my_pos:
-                violations += 1
-            elif direction == 'before' and pos[dep_l] < my_pos:
-                violations += 1
+def _trim_graph(
+    dep_graph: dict[str, set[str]],
+    keep:      set[str],
+) -> dict[str, set[str]]:
+    """Sub-graph containing only nodes in *keep*."""
+    return {
+        mid: {d for d in deps if d in keep}
+        for mid, deps in dep_graph.items()
+        if mid in keep
+    }
 
-    return violations
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Bucketing
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _bucket(
+    mod_ids:        list[str],
+    tier_zero_ids:  set[str],
+    tier_one_ids:   set[str],
+    tier_three_ids: set[str],
+) -> tuple[list[str], list[str], list[str], list[str]]:
+    t0, t1, t2, t3 = [], [], [], []
+    for mid in mod_ids:
+        if mid in tier_zero_ids:
+            t0.append(mid)
+        elif mid in tier_one_ids:
+            t1.append(mid)
+        elif mid in tier_three_ids:
+            t3.append(mid)
+        else:
+            t2.append(mid)
+    return t0, t1, t2, t3
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Topological sort (per tier)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _sort_tier_list(
+    tier_mods: list[str],
+    dep_graph: dict[str, set[str]],
+    installed: dict[str, ModInfo],
+) -> list[str]:
+    if not tier_mods:
+        return []
+    tier_set  = set(tier_mods)
+    sub_graph = _trim_graph(dep_graph, tier_set)
+    return _run_toposort(sub_graph, tier_set, installed,
+                         label=f"tier({len(tier_mods)})")
+
+def _run_toposort(
+    sub_graph: dict[str, set[str]],
+    tier_set:  set[str],
+    installed: dict[str, ModInfo],
+    label:     str = "",
+) -> list[str]:
+    try:
+        levels = list(toposort(sub_graph))
+    except CircularDependencyError:
+        # Fall back: alphabetical for the whole tier
+        return sorted(tier_set, key=lambda m: _mod_name(m, installed))
+
+    result: list[str] = []
+    placed: set[str]  = set()
+
+    for level in levels:
+        level_mods = sorted(
+            [m for m in level if m in tier_set],
+            key=lambda m: _mod_name(m, installed),
+        )
+        result.extend(level_mods)
+        placed.update(level_mods)
+
+    # Safety net for any node toposort didn't surface
+    remaining = sorted(
+        [m for m in tier_set if m not in placed],
+        key=lambda m: _mod_name(m, installed),
+    )
+    result.extend(remaining)
+    return result
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Tier 0 canonical reorder
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _reorder_tier_zero(sorted_t0: list[str]) -> list[str]:
+    """
+    Within tier 0:
+      1. Pre-patchers (non-Core/DLC) in their toposorted order
+      2. Core
+      3. DLCs in canonical release order
+    """
+    pre  = [m for m in sorted_t0 if m not in CORE_AND_DLCS_SET]
+    core = [m for m in sorted_t0 if m == CORE]
+    dlcs = [d for d in DLCS if d in set(sorted_t0)]
+    return pre + core + dlcs
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Helpers
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _mod_name(mid: str, installed: dict[str, ModInfo]) -> str:
+    info = installed.get(mid)
+    return info.name.lower() if (info and info.name) else mid

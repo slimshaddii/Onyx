@@ -10,10 +10,10 @@
   "download_method": "steamcmd",
   "is_steam_copy": false,
   "window": {
-    "width": 1348,
-    "height": 764,
-    "x": 298,
-    "y": 84
+    "width": 1433,
+    "height": 868,
+    "x": 218,
+    "y": 40
   },
   "auto_backup_on_launch": true,
   "backup_count": 3,

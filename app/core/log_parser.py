@@ -130,39 +130,40 @@ class LogParser:
         return True
 
     def find_player_log(self, instance_path: Optional[Path] = None) -> Optional[Path]:
-        """Find the most recent Player.log — cross-platform."""
+        """
+        Find Player.log — instance log takes strict priority.
+        AppData is only checked when no instance path is given
+        or the instance has no log yet.
+        """
         import platform
-        candidates = []
 
-        # Instance log first (redirected via -logfile)
+        # Instance log — always prefer this if it exists
         if instance_path:
             inst_log = instance_path / 'Player.log'
             if inst_log.exists():
-                candidates.append(inst_log)
+                return inst_log
 
+        # No instance log — fall back to system default
         system = platform.system()
-
         if system == 'Windows':
             local_low = Path(os.environ.get(
-                'LOCALAPPDATA', str(Path.home() / 'AppData' / 'Local')))
-            local_low = local_low.parent / 'LocalLow'
+                'LOCALAPPDATA',
+                str(Path.home() / 'AppData' / 'Local')))
+            local_low  = local_low.parent / 'LocalLow'
             rw_log_dir = (local_low / 'Ludeon Studios' /
-                        'RimWorld by Ludeon Studios')
+                          'RimWorld by Ludeon Studios')
         elif system == 'Darwin':
             rw_log_dir = (Path.home() / 'Library' / 'Logs' /
-                        'Ludeon Studios' / 'RimWorld by Ludeon Studios')
+                          'Ludeon Studios' / 'RimWorld by Ludeon Studios')
         else:
-            # Linux
             rw_log_dir = (Path.home() / '.config' / 'unity3d' /
-                        'Ludeon Studios' / 'RimWorld by Ludeon Studios')
+                          'Ludeon Studios' / 'RimWorld by Ludeon Studios')
 
         for log_name in ('Player.log', 'Player-prev.log'):
             p = rw_log_dir / log_name
             if p.exists():
-                candidates.append(p.resolve())
+                return p
 
-        if candidates:
-            return max(candidates, key=lambda p: p.stat().st_mtime)
         return None
 
     def analyze(self) -> list[LogIssue]:

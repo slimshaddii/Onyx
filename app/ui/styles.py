@@ -1,10 +1,53 @@
 # Onyx Launcher — Prism-inspired dark theme
 # Palette: #222222 (bg), #323232 (panels), #ffffff (text), #74d4cc (accent)
 
+THEME_COLORS: dict[str, dict[str, str]] = {
+    'dark': {
+        'bg':          '#222222',
+        'bg_mid':      '#2a2a2a',
+        'bg_panel':    '#1a1a1a',
+        'bg_card':     '#323232',
+        'border':      '#3a3a3a',
+        'text':        '#ffffff',
+        'text_dim':    '#888888',
+        'text_faint':  '#aaaaaa',
+        'accent':      '#74d4cc',
+        'error':       '#ff4444',
+        'warning':     '#ff8800',
+        'order':       '#ffaa00',
+        'success':     '#4CAF50',
+        'item_normal': '#e0e0e0',
+    },
+    'light': {
+        'bg':          '#f0f0f0',
+        'bg_mid':      '#e8e8e8',
+        'bg_panel':    '#ffffff',
+        'bg_card':     '#e0e0e0',
+        'border':      '#c0c0c0',
+        'text':        '#1a1a1a',
+        'text_dim':    '#666666',
+        'text_faint':  '#444444',
+        'accent':      '#2a9d96',
+        'error':       '#cc0000',
+        'warning':     '#cc6600',
+        'order':       '#997700',
+        'success':     '#2e7d32',
+        'item_normal': '#1a1a1a',
+    },
+}
+
+
+def get_colors(theme: str = 'dark') -> dict[str, str]:
+    """Return color tokens for the given theme ('dark' or 'light')."""
+    return THEME_COLORS.get(theme, THEME_COLORS['dark'])
+
 DARK_STYLESHEET = """
 /* ===== Base ===== */
 QMainWindow, QDialog { background-color: #222222; color: #ffffff; }
-QWidget { background: transparent; color: #ffffff; font-family: "Segoe UI"; font-size: 12px; }
+QWidget { background: #222222; color: #ffffff; font-family: "Segoe UI"; font-size: 12px; }
+QAbstractScrollArea { background: #222222; }
+QDialog { background: #222222; }
+QWidget#centralWidget { background: #222222; }
 
 /* ===== Toolbar ===== */
 QToolBar { background: #1a1a1a; border-bottom: 1px solid #3a3a3a; spacing: 1px; padding: 3px 6px; }
@@ -20,13 +63,29 @@ QPushButton { background: #3a3a3a; color: #ffffff; border: 1px solid #4a4a4a;
 QPushButton:hover { background: #4a4a4a; }
 QPushButton:pressed { background: #555555; }
 QPushButton:disabled { background: #2a2a2a; color: #555555; border-color: #333333; }
-QPushButton#primaryButton { background: #74d4cc; color: #1a1a1a; border: none; font-weight: 700; }
-QPushButton#primaryButton:hover { background: #8ae0d8; }
-QPushButton#primaryButton:pressed { background: #5cc0b8; }
-QPushButton#dangerButton { background: #cc3333; color: #ffffff; border: none; }
-QPushButton#dangerButton:hover { background: #e04040; }
-QPushButton#successButton { background: #3a8a3e; color: #ffffff; border: none; }
-QPushButton#successButton:hover { background: #4a9e4e; }
+
+/* primaryButton — explicit state rules to prevent disabled bleed-through */
+QPushButton#primaryButton          { background: #74d4cc; color: #1a1a1a; border: none; font-weight: 700; }
+QPushButton#primaryButton:hover    { background: #8ae0d8; color: #1a1a1a; }
+QPushButton#primaryButton:pressed  { background: #5cc0b8; color: #1a1a1a; }
+QPushButton#primaryButton:disabled { background: #2a6a66; color: #1a1a1a; border: none; opacity: 0.5; }
+QPushButton#primaryButton:enabled  { background: #74d4cc; color: #1a1a1a; border: none; }
+
+/* dangerButton */
+QPushButton#dangerButton          { background: #cc3333; color: #ffffff; border: none; }
+QPushButton#dangerButton:hover    { background: #e04040; color: #ffffff; }
+QPushButton#dangerButton:pressed  { background: #aa2222; color: #ffffff; }
+QPushButton#dangerButton:disabled { background: #4a1a1a; color: #888888; border: none; }
+QPushButton#dangerButton:enabled  { background: #cc3333; color: #ffffff; border: none; }
+
+/* successButton */
+QPushButton#successButton          { background: #3a8a3e; color: #ffffff; border: none; }
+QPushButton#successButton:hover    { background: #4a9e4e; color: #ffffff; }
+QPushButton#successButton:pressed  { background: #2a7a2e; color: #ffffff; }
+QPushButton#successButton:disabled { background: #1a3a1e; color: #888888; border: none; }
+QPushButton#successButton:enabled  { background: #3a8a3e; color: #ffffff; border: none; }
+
+/* subscribeBtn / installedBtn */
 QPushButton#subscribeBtn { background: #3a8a3e; color: #ffffff; border: none;
     font-size: 13px; padding: 8px 22px; border-radius: 3px; }
 QPushButton#subscribeBtn:hover { background: #4a9e4e; }
@@ -124,8 +183,7 @@ QSpinBox { background: #1a1a1a; color: #ffffff; border: 1px solid #4a4a4a;
     border-radius: 5px; padding: 3px 6px; }
 
 /* ===== Instance cards ===== */
-QFrame#instanceCard { background: #323232; border: 2px solid #3a3a3a;
-    border-radius: 10px; }
+QFrame#instanceCard { background: #323232; border: 2px solid #3a3a3a; border-radius: 10px; }
 QFrame#instanceCard:hover { border-color: #555555; background: #3a3a3a; }
 QFrame#instanceCardSelected { background: #2a4a48; border: 2px solid #74d4cc; border-radius: 10px; }
 
@@ -134,8 +192,10 @@ QScrollArea { border: none; background: transparent; }
 
 LIGHT_STYLESHEET = """
 QMainWindow, QDialog { background-color: #f0f0f0; color: #1a1a1a; }
-QWidget { background: transparent; color: #1a1a1a;
-          font-family: "Segoe UI"; font-size: 12px; }
+QWidget { background: #f0f0f0; color: #1a1a1a; font-family: "Segoe UI"; font-size: 12px; }
+QAbstractScrollArea { background: #f0f0f0; }
+QDialog { background: #f0f0f0; }
+QWidget#centralWidget { background: #f0f0f0; }
 
 QToolBar { background: #e0e0e0; border-bottom: 1px solid #c0c0c0;
            spacing: 1px; padding: 3px 6px; }
@@ -150,15 +210,23 @@ QPushButton { background: #e0e0e0; color: #1a1a1a;
               padding: 5px 14px; font-weight: 600; font-size: 11px; }
 QPushButton:hover { background: #d0d0d0; }
 QPushButton:pressed { background: #c0c0c0; }
-QPushButton:disabled { background: #ececec; color: #aaaaaa;
-                        border-color: #cccccc; }
-QPushButton#primaryButton { background: #5bbdb5; color: #ffffff;
-                             border: none; font-weight: 700; }
-QPushButton#primaryButton:hover { background: #4aada5; }
-QPushButton#dangerButton { background: #cc3333; color: #ffffff;
-                            border: none; }
-QPushButton#successButton { background: #3a8a3e; color: #ffffff;
-                             border: none; }
+QPushButton:disabled { background: #ececec; color: #aaaaaa; border-color: #cccccc; }
+
+QPushButton#primaryButton         { background: #5bbdb5; color: #ffffff; border: none; font-weight: 700; }
+QPushButton#primaryButton:hover   { background: #4aada5; color: #ffffff; }
+QPushButton#primaryButton:pressed { background: #3a9d95; color: #ffffff; }
+QPushButton#primaryButton:disabled { background: #aaddd9; color: #ffffff; border: none; }
+QPushButton#primaryButton:enabled  { background: #5bbdb5; color: #ffffff; border: none; }
+
+QPushButton#dangerButton          { background: #cc3333; color: #ffffff; border: none; }
+QPushButton#dangerButton:hover    { background: #e04040; color: #ffffff; }
+QPushButton#dangerButton:disabled { background: #e8b0b0; color: #888888; border: none; }
+QPushButton#dangerButton:enabled  { background: #cc3333; color: #ffffff; border: none; }
+
+QPushButton#successButton          { background: #3a8a3e; color: #ffffff; border: none; }
+QPushButton#successButton:hover    { background: #4a9e4e; color: #ffffff; }
+QPushButton#successButton:disabled { background: #b0d8b2; color: #888888; border: none; }
+QPushButton#successButton:enabled  { background: #3a8a3e; color: #ffffff; border: none; }
 
 QLineEdit, QTextEdit, QPlainTextEdit { background: #ffffff; color: #1a1a1a;
     border: 1px solid #c0c0c0; border-radius: 5px; padding: 5px 8px; }
@@ -171,12 +239,10 @@ QListWidget::item:selected { background: #c8eae8; color: #1a1a1a; }
 QListWidget::item:hover:!selected { background: #e8e8e8; }
 
 QScrollBar:vertical { background: transparent; width: 6px; }
-QScrollBar::handle:vertical { background: #c0c0c0; border-radius: 3px;
-                               min-height: 30px; }
+QScrollBar::handle:vertical { background: #c0c0c0; border-radius: 3px; min-height: 30px; }
 QScrollBar::handle:vertical:hover { background: #a0a0a0; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical
-    { background: none; height: 0; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; height: 0; }
 
 QTabWidget::pane { border: 1px solid #c0c0c0; background: #f0f0f0; }
 QTabBar::tab { background: #e0e0e0; color: #555555; padding: 7px 16px;
@@ -194,8 +260,7 @@ QGroupBox { border: 1px solid #c0c0c0; border-radius: 6px;
             margin-top: 10px; padding-top: 14px;
             font-weight: 700; font-size: 11px; color: #5bbdb5;
             background: #e8e8e8; }
-QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left;
-                   padding: 0 6px; }
+QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 6px; }
 
 QComboBox { background: #ffffff; color: #1a1a1a; border: 1px solid #c0c0c0;
             border-radius: 5px; padding: 4px 8px; font-size: 11px; }
@@ -207,15 +272,12 @@ QProgressBar { background: #e0e0e0; border: 1px solid #c0c0c0;
                color: #1a1a1a; height: 18px; }
 QProgressBar::chunk { background: #5bbdb5; border-radius: 4px; }
 
-QStatusBar { background: #e0e0e0; color: #555555;
-             border-top: 1px solid #c0c0c0; }
+QStatusBar { background: #e0e0e0; color: #555555; border-top: 1px solid #c0c0c0; }
 QToolTip { background: #ffffff; color: #1a1a1a; border: 1px solid #c0c0c0;
            padding: 4px 8px; border-radius: 4px; font-size: 11px; }
 
-QFrame#instanceCard { background: #e8e8e8; border: 2px solid #d0d0d0;
-                      border-radius: 10px; }
+QFrame#instanceCard { background: #e8e8e8; border: 2px solid #d0d0d0; border-radius: 10px; }
 QFrame#instanceCard:hover { border-color: #b0b0b0; background: #e0e0e0; }
-QFrame#instanceCardSelected { background: #c8eae8; border: 2px solid #5bbdb5;
-                               border-radius: 10px; }
+QFrame#instanceCardSelected { background: #c8eae8; border: 2px solid #5bbdb5; border-radius: 10px; }
 QScrollArea { border: none; background: transparent; }
 """

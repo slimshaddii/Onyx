@@ -82,7 +82,7 @@ class InstanceDetailPanel(QWidget):
         self.header.set_instance(inst.name, str(inst.path))
         self.actions.set_enabled(True)
         self.info.set_instance(inst, rw)
-        self.saves.set_instance(inst)
+        self.saves.set_instance(inst, rw)
         self.notes.set_instance(inst)
 
     def clear(self):

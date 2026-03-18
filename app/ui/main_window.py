@@ -146,9 +146,15 @@ class MainWindow(QMainWindow):
     def _apply_theme(self):
         from PyQt6.QtWidgets import QApplication
         from app.ui.styles import DARK_STYLESHEET, LIGHT_STYLESHEET
+        app = QApplication.instance()
         sheet = (DARK_STYLESHEET if self._s.theme == 'dark'
-                 else LIGHT_STYLESHEET)
-        QApplication.instance().setStyleSheet(sheet)
+                else LIGHT_STYLESHEET)
+        app.setStyleSheet(sheet)
+        # Force all widgets to re-evaluate styles after theme switch
+        for widget in app.allWidgets():
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+            widget.update()
 
     # ── Shortcuts ─────────────────────────────────────────────────────────────
 
@@ -176,15 +182,16 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         tb.addAction(QAction("⟳ Refresh",        self, triggered=self.refresh))
         spacer = QWidget()
+        spacer.setObjectName("toolbarSpacer")
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding,
-                             QSizePolicy.Policy.Preferred)
+                            QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
         tb.addAction(QAction("🔍 Find Mod",      self, triggered=self._on_find_mod))
         tb.addAction(QAction("⚙ Settings",       self, triggered=self._on_settings))
 
     def _build_ui(self):
         c = QWidget()
-        c.setStyleSheet("background:#222222;")
+        c.setObjectName("centralWidget")
         self.setCentralWidget(c)
         lo = QHBoxLayout(c)
         lo.setContentsMargins(0, 0, 0, 0)
@@ -263,6 +270,36 @@ class MainWindow(QMainWindow):
 
     def _on_launch(self, inst):
         from app.ui.launch_dialog import LaunchDialog
+
+        # Skip dialog if user previously checked "remember"
+        if inst.mods_configured:
+            from app.core.app_settings import AppSettings
+            from pathlib import Path
+            _s        = AppSettings.instance()
+            dr        = _s.data_root
+            exe       = _s.rimworld_exe
+            onyx_mods = Path(dr)  / 'mods' if dr  else None
+            game_mods = Path(exe).parent / 'Mods' if exe else None
+            all_mods  = self.rw.get_installed_mods(self._all_mod_paths())
+
+            r = self.launcher.launch(
+                inst,
+                inst.launch_args,
+                log_to_instance=True,
+                onyx_mods_dir=onyx_mods,
+                game_mods_dir=game_mods,
+                all_mods=all_mods)
+
+            if r and r.success:
+                self.sl.setText(f"▶ {inst.name}")
+                self.gl.setText("🎮 Running")
+                self.refresh()
+            elif r:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.critical(self, "Launch Failed", r.message)
+            return
+
+        # First time or remember unchecked — show dialog
         dlg = LaunchDialog(self, inst, self.launcher)
         if dlg.exec():
             r = dlg.launch_result
@@ -271,6 +308,7 @@ class MainWindow(QMainWindow):
                 self.gl.setText("🎮 Running")
                 self.refresh()
             elif r:
+                from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.critical(self, "Launch Failed", r.message)
 
     def _on_edit(self, inst):
@@ -393,8 +431,8 @@ class MainWindow(QMainWindow):
 
     def _on_logs(self):
         from app.ui.log_viewer import LogViewerDialog
-        LogViewerDialog(
-            None, self.log_parser, self.detail.current_instance).exec()
+        inst = self.detail.current_instance
+        LogViewerDialog(None, self.log_parser, inst).exec()
 
     # ── Settings ──────────────────────────────────────────────────────────────
 
@@ -486,7 +524,18 @@ class MainWindow(QMainWindow):
     def _tick(self):
         if self.launcher.is_running():
             self.gl.setText("🎮 Running")
-        elif self.gl.text():
+        elif self.gl.text() == "🎮 Running":
+            # Game just stopped — record playtime
+            self.gl.setText("")
+            inst = self.detail.current_instance
+            if inst and self.launcher._launch_time:
+                mins = self.launcher.get_playtime_minutes()
+                if mins > 0:
+                    inst.total_playtime_minutes += mins
+                    inst.save()
+                    self.detail.set_instance(inst, self.rw)
+                self.launcher._launch_time = None
+        else:
             self.gl.setText("")
 
     def closeEvent(self, e):
