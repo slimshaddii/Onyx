@@ -8,13 +8,9 @@ Usage
     exe = s.rimworld_exe
     s.rimworld_exe = '/new/path'
     s.save()
-
-All code that previously called load_json(settings_path(), {})
-should use AppSettings.instance() instead.
 """
 
 from __future__ import annotations
-from pathlib import Path
 from typing import Optional
 from app.core.paths import settings_path
 from app.utils.file_utils import load_json, save_json
@@ -33,26 +29,17 @@ _DEFAULTS: dict = {
     'auto_backup_on_launch': True,
     'backup_count':          3,
     'offered_import':        False,
+    'theme':                 'dark',
 }
 
 
 class AppSettings:
-    """
-    Singleton settings store.
-
-    Loaded once from disk on first access.
-    Write-through on every .save() call.
-    """
-
     _instance: Optional['AppSettings'] = None
 
     def __init__(self):
         self._data: dict = load_json(settings_path(), {})
-        # Fill in any missing keys with defaults
         for k, v in _DEFAULTS.items():
             self._data.setdefault(k, v)
-
-    # ── Singleton ─────────────────────────────────────────────────────────────
 
     @classmethod
     def instance(cls) -> 'AppSettings':
@@ -62,23 +49,17 @@ class AppSettings:
 
     @classmethod
     def reload(cls):
-        """Force reload from disk — call after external settings change."""
         cls._instance = cls()
-
-    # ── Persistence ───────────────────────────────────────────────────────────
 
     def save(self):
         save_json(settings_path(), self._data)
 
     def update(self, d: dict):
-        """Merge a dict into settings and save."""
         self._data.update(d)
         self.save()
 
     def as_dict(self) -> dict:
         return dict(self._data)
-
-    # ── Typed accessors ───────────────────────────────────────────────────────
 
     @property
     def rimworld_exe(self) -> str:
@@ -185,7 +166,13 @@ class AppSettings:
     def window(self, v: dict):
         self._data['window'] = v
 
-    # ── Raw get/set for anything not typed above ──────────────────────────────
+    @property
+    def theme(self) -> str:
+        return self._data.get('theme', 'dark')
+
+    @theme.setter
+    def theme(self, v: str):
+        self._data['theme'] = v
 
     def get(self, key: str, default=None):
         return self._data.get(key, default)

@@ -234,6 +234,7 @@ def _create_link(source: Path, target: Path) -> tuple[bool, str]:
         if not _force_remove(target):
             return False, "cannot_remove_existing"
 
+    # Windows: try junction first
     if os.name == 'nt':
         try:
             r = subprocess.run(
@@ -244,6 +245,7 @@ def _create_link(source: Path, target: Path) -> tuple[bool, str]:
         except Exception:
             pass
 
+    # All platforms: symlink
     try:
         target.symlink_to(source, target_is_directory=True)
         if _path_exists_any(target) and _is_valid_mod(target):
@@ -251,6 +253,7 @@ def _create_link(source: Path, target: Path) -> tuple[bool, str]:
     except OSError:
         pass
 
+    # Fallback: full copy
     try:
         if _path_exists_any(target):
             _force_remove(target)
@@ -283,8 +286,10 @@ def _force_remove(target: Path) -> bool:
                     except Exception:
                         pass
             else:
+                # Linux/Mac: symlinks unlink cleanly
                 target.unlink()
                 return not _path_exists_any(target)
+
         elif target.is_dir():
             shutil.rmtree(str(target), ignore_errors=True)
             return not _path_exists_any(target)
@@ -296,10 +301,12 @@ def _force_remove(target: Path) -> bool:
                 subprocess.run(
                     ['cmd', '/c', 'rmdir', '/s', '/q', str(target)],
                     capture_output=True, timeout=10, check=False)
-                return not _path_exists_any(target)
+            else:
+                shutil.rmtree(str(target), ignore_errors=True)
+            return not _path_exists_any(target)
+
     except Exception:
         pass
-
     return not _path_exists_any(target)
 
 
@@ -327,3 +334,13 @@ def _is_junction(path: Path) -> bool:
         return bool(attrs & FILE_ATTRIBUTE_REPARSE_POINT)
     except Exception:
         return False
+    
+def delete_mod_permanently(workshop_id: str,
+                            onyx_mods_dir: Path,
+                            game_mods_dir: Path,
+                            steamcmd_path: str = '') -> dict:
+    """..."""
+
+def _remove_from_acf(steamcmd_root: Path, workshop_id: str,
+                     errors: list) -> bool:
+    """..."""

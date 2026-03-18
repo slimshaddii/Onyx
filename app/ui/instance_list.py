@@ -131,6 +131,10 @@ class InstanceGridPanel(QWidget):
         self.search.textChanged.connect(self._rebuild)
         filt.addWidget(self.search, 1)
         self.sort_cb = QComboBox()
+        self.group_filter = QComboBox()
+        self.group_filter.addItem("All Groups")
+        self.group_filter.currentIndexChanged.connect(self._rebuild)
+        filt.addWidget(self.group_filter)
         for lbl, _, _ in self.SORTS:
             self.sort_cb.addItem(lbl)
         self.sort_cb.currentIndexChanged.connect(self._rebuild)
@@ -150,6 +154,20 @@ class InstanceGridPanel(QWidget):
 
     def set_instances(self, insts: list[Instance]):
         self.instances = insts
+
+        # Rebuild group filter
+        current_group = self.group_filter.currentText()
+        self.group_filter.blockSignals(True)
+        self.group_filter.clear()
+        self.group_filter.addItem("All Groups")
+        groups = sorted({i.group for i in insts if i.group})
+        for g in groups:
+            self.group_filter.addItem(g)
+        # Restore previous selection if still valid
+        idx = self.group_filter.findText(current_group)
+        self.group_filter.setCurrentIndex(max(0, idx))
+        self.group_filter.blockSignals(False)
+
         self._rebuild()
 
     def _rebuild(self):
@@ -159,17 +177,31 @@ class InstanceGridPanel(QWidget):
                 w.deleteLater()
         self._cards.clear()
 
-        q = self.search.text().lower()
+        q            = self.search.text().lower()
+        group_filter = self.group_filter.currentText()
+
         filt = [i for i in self.instances if q in i.name.lower()]
+        if group_filter != "All Groups":
+            filt = [i for i in filt if i.group == group_filter]
+
         si = self.sort_cb.currentIndex()
         if 0 <= si < len(self.SORTS):
             _, fn, rev = self.SORTS[si]
             filt.sort(key=fn, reverse=rev)
 
-        vw = self.scroll.viewport().width() if self.scroll.viewport().width() > 50 else 350
+        vw   = self.scroll.viewport().width() if self.scroll.viewport().width() > 50 else 350
         cols = max(1, (vw - 6) // 158)
 
-        for idx, inst in enumerate(filt):
+        # Group by group name when "All Groups" is selected
+        if group_filter == "All Groups" and any(i.group for i in filt):
+            self._rebuild_grouped(filt, cols)
+        else:
+            self._rebuild_flat(filt, cols)
+
+        self.cnt.setText(f"{len(filt)}/{len(self.instances)}")
+
+    def _rebuild_flat(self, instances: list, cols: int):
+        for idx, inst in enumerate(instances):
             card = InstanceCard(inst)
             card.clicked.connect(self._on_click)
             card.double_clicked.connect(self.instance_double_clicked.emit)
@@ -179,7 +211,48 @@ class InstanceGridPanel(QWidget):
             self.gl.addWidget(card, idx // cols, idx % cols)
             self._cards.append(card)
 
-        self.cnt.setText(f"{len(filt)}/{len(self.instances)}")
+    def _rebuild_grouped(self, instances: list, cols: int):
+        """Show instances grouped by their group tag with a header row."""
+        from PyQt6.QtWidgets import QLabel as _QLabel
+        grouped: dict[str, list] = {}
+        ungrouped = []
+        for inst in instances:
+            if inst.group:
+                grouped.setdefault(inst.group, []).append(inst)
+            else:
+                ungrouped.append(inst)
+
+        current_row = 0
+
+        def _add_group(label: str, group_instances: list):
+            nonlocal current_row
+            # Group header spanning all columns
+            hdr = _QLabel(f"  {label}")
+            hdr.setStyleSheet(
+                "color:#74d4cc; font-weight:bold; font-size:11px; "
+                "background:#1a1a1a; padding:4px 8px; "
+                "border-bottom:1px solid #3a3a3a;")
+            self.gl.addWidget(hdr, current_row, 0, 1, cols)
+            current_row += 1
+
+            for col_idx, inst in enumerate(group_instances):
+                card = InstanceCard(inst)
+                card.clicked.connect(self._on_click)
+                card.double_clicked.connect(self.instance_double_clicked.emit)
+                card.context_requested.connect(self._show_context)
+                if self._selected_instance and inst is self._selected_instance:
+                    card.set_selected(True)
+                row = current_row + col_idx // cols
+                col = col_idx % cols
+                self.gl.addWidget(card, row, col)
+                self._cards.append(card)
+            current_row += (len(group_instances) + cols - 1) // cols
+
+        for group_name in sorted(grouped.keys()):
+            _add_group(group_name, grouped[group_name])
+
+        if ungrouped:
+            _add_group("Ungrouped", ungrouped)
 
     def _on_click(self, inst):
         self._selected_instance = inst

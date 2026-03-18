@@ -128,6 +128,17 @@ class SettingsDialog(QDialog):
         g4.setLayout(g4l)
         lo.addWidget(g4)
 
+        # Cosmetics
+        g5 = QGroupBox("Appearance")
+        g5l = QHBoxLayout()
+        g5l.addWidget(QLabel("Theme:"))
+        self.theme_cb = QComboBox()
+        self.theme_cb.addItems(["Dark", "Light"])
+        g5l.addWidget(self.theme_cb)
+        g5l.addStretch()
+        g5.setLayout(g5l)
+        lo.addWidget(g5)
+
         # Detect log
         self.det_log = QTextEdit()
         self.det_log.setReadOnly(True)
@@ -159,7 +170,12 @@ class SettingsDialog(QDialog):
         return b
 
     def _browse_file(self, t):
-        p, _ = QFileDialog.getOpenFileName(self, "Select", "", "Exe (*.exe);;All (*)")
+        import platform
+        if platform.system() == 'Windows':
+            filt = "Exe (*.exe);;All Files (*)"
+        else:
+            filt = "All Files (*)"
+        p, _ = QFileDialog.getOpenFileName(self, "Select", "", filt)
         if p:
             t.setText(p)
 
@@ -186,6 +202,10 @@ class SettingsDialog(QDialog):
         self.method.setCurrentIndex(1 if self.s.get('download_method') == 'steam_native' else 0)
         for p in self.s.get('extra_mod_paths', []):
             self.paths_list.addItem(p)
+        from app.core.app_settings import AppSettings
+        self.theme_cb.setCurrentIndex(
+            0 if AppSettings.instance().theme == 'dark' else 1)
+
 
     def _detect(self):
         self.det_log.show()
@@ -222,6 +242,7 @@ class SettingsDialog(QDialog):
         self.s['download_method'] = self.method.currentData()
         self.s['extra_mod_paths'] = [
             self.paths_list.item(i).text() for i in range(self.paths_list.count())]
+        self.s['theme'] = 'dark' if self.theme_cb.currentIndex() == 0 else 'light'
         self.accept()
 
     def get_settings(self) -> dict:

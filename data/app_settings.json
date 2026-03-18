@@ -12,11 +12,12 @@
   "window": {
     "width": 1348,
     "height": 764,
-    "x": 293,
-    "y": 42
+    "x": 298,
+    "y": 84
   },
   "auto_backup_on_launch": true,
   "backup_count": 3,
   "steamcmd_username": "",
-  "offered_import": true
+  "offered_import": true,
+  "theme": "dark"
 }

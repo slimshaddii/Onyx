@@ -3,6 +3,7 @@ Instance icon generation — Prism-style letter icons with colors.
 """
 
 import hashlib
+import platform
 from pathlib import Path
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QFont, QIcon
 from PyQt6.QtCore import Qt, QRect
@@ -25,6 +26,20 @@ RW_ICONS = {
 }
 
 
+def _ui_font() -> str:
+    """Return the best available UI font for the current platform."""
+    system = platform.system()
+    if system == 'Windows':
+        return 'Segoe UI'
+    elif system == 'Darwin':
+        return 'SF Pro Display'
+    else:
+        # Linux — prefer these in order
+        for font in ('Ubuntu', 'Noto Sans', 'DejaVu Sans', 'Liberation Sans'):
+            return font   # Qt will fall back automatically if not found
+    return 'sans-serif'
+
+
 def color_for_name(name: str) -> str:
     h = int(hashlib.md5(name.encode()).hexdigest()[:8], 16)
     return PALETTE[h % len(PALETTE)]
@@ -40,15 +55,13 @@ def generate_icon(name: str, size: int = 48, color: str = '') -> QPixmap:
     p = QPainter(pm)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-    # Background rounded rect
     p.setBrush(QColor(color))
     p.setPen(Qt.PenStyle.NoPen)
     radius = size // 5
     p.drawRoundedRect(0, 0, size, size, radius, radius)
 
-    # Letter
     p.setPen(QColor('#ffffff'))
-    font = QFont('Segoe UI', int(size * 0.45), QFont.Weight.Bold)
+    font = QFont(_ui_font(), int(size * 0.45), QFont.Weight.Bold)
     p.setFont(font)
     p.drawText(QRect(0, 0, size, size), Qt.AlignmentFlag.AlignCenter, letter)
     p.end()
@@ -57,21 +70,18 @@ def generate_icon(name: str, size: int = 48, color: str = '') -> QPixmap:
 
 def load_icon(instance_path: Path, instance_name: str,
               icon_color: str = '', icon_key: str = '') -> QPixmap:
-    """Load custom icon or generate one."""
-    # Check for custom icon
     for ext in ('png', 'jpg', 'jpeg', 'ico', 'bmp'):
         custom = instance_path / f'icon.{ext}'
         if custom.exists():
             pm = QPixmap(str(custom))
             if not pm.isNull():
-                return pm.scaled(48, 48, Qt.AspectRatioMode.KeepAspectRatio,
-                                 Qt.TransformationMode.SmoothTransformation)
-
+                return pm.scaled(48, 48,
+                                  Qt.AspectRatioMode.KeepAspectRatio,
+                                  Qt.TransformationMode.SmoothTransformation)
     return generate_icon(instance_name, 48, icon_color)
 
 
 def get_icon_choices() -> list[tuple[str, str]]:
-    """Return (key, emoji) pairs for the icon picker."""
     return list(RW_ICONS.items())
 
 

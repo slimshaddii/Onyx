@@ -159,6 +159,12 @@ class InstanceEditDialog(QDialog):
         self.args_edit.setText(' '.join(self.inst.launch_args))
         self.args_edit.setPlaceholderText("-popupwindow -screen-width 1920 …")
         st_lo.addWidget(self.args_edit)
+        st_lo.addWidget(QLabel("Group / Tag:"))
+        self.group_edit = QLineEdit()
+        self.group_edit.setText(self.inst.group or '')
+        self.group_edit.setPlaceholderText(
+            "e.g. Vanilla, Modded, Testing (used for filtering)")
+        st_lo.addWidget(self.group_edit)
         st_lo.addWidget(QLabel(
             "<small>Common: -popupwindow, -screen-fullscreen 0, "
             "-screen-width 1920, -screen-height 1080, -force-d3d11</small>"))
@@ -194,11 +200,13 @@ class InstanceEditDialog(QDialog):
         lo.addLayout(btns)
 
     def _save(self):
-        self.inst.notes = self.notes_edit.toPlainText()
+        self.inst.notes       = self.notes_edit.toPlainText()
         self.inst.launch_args = self.args_edit.text().split()
+        self.inst.group       = self.group_edit.text().strip()
         self.inst.save()
         self.instance_changed.emit()
         self.accept()
+
 
     def _open_mod_editor(self):
         from app.ui.modeditor import ModEditorDialog

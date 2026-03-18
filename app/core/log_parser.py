@@ -1,9 +1,9 @@
+import os
 import re
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 from datetime import datetime
-
 
 @dataclass
 class LogEntry:
@@ -130,20 +130,32 @@ class LogParser:
         return True
 
     def find_player_log(self, instance_path: Optional[Path] = None) -> Optional[Path]:
-        """Find the most recent Player.log."""
+        """Find the most recent Player.log — cross-platform."""
+        import platform
         candidates = []
 
-        # Check instance folder first (if we redirect logs there)
+        # Instance log first (redirected via -logfile)
         if instance_path:
             inst_log = instance_path / 'Player.log'
             if inst_log.exists():
                 candidates.append(inst_log)
 
-        # Default Unity log location
-        import os
-        local_low = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
-        local_low = local_low.parent / 'LocalLow'
-        rw_log_dir = local_low / 'Ludeon Studios' / 'RimWorld by Ludeon Studios'
+        system = platform.system()
+
+        if system == 'Windows':
+            local_low = Path(os.environ.get(
+                'LOCALAPPDATA', str(Path.home() / 'AppData' / 'Local')))
+            local_low = local_low.parent / 'LocalLow'
+            rw_log_dir = (local_low / 'Ludeon Studios' /
+                        'RimWorld by Ludeon Studios')
+        elif system == 'Darwin':
+            rw_log_dir = (Path.home() / 'Library' / 'Logs' /
+                        'Ludeon Studios' / 'RimWorld by Ludeon Studios')
+        else:
+            # Linux
+            rw_log_dir = (Path.home() / '.config' / 'unity3d' /
+                        'Ludeon Studios' / 'RimWorld by Ludeon Studios')
+
         for log_name in ('Player.log', 'Player-prev.log'):
             p = rw_log_dir / log_name
             if p.exists():

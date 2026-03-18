@@ -11,18 +11,21 @@ from app.core.rimworld import ModInfo
 class PreviewPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._current_image_path: str = ''   # track for resize reload
+
         lo = QVBoxLayout(self)
         lo.setContentsMargins(4, 0, 0, 0)
         lo.setSpacing(3)
 
         self.img = QLabel()
-        self.img.setFixedHeight(100)
+        self.img.setMinimumHeight(100)
+        self.img.setMaximumHeight(140)
         self.img.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.img.setStyleSheet("background:#1a1a1a;border-radius:6px;")
+        self.img.setStyleSheet(
+            "background:#1a1a1a;border-radius:6px;")
         self.img.setText("Select a mod")
         lo.addWidget(self.img)
 
-        # Name uses teal accent (#74d4cc) — consistent with Prism palette
         self.name = QLabel("")
         self.name.setStyleSheet(
             "font-weight:bold;font-size:12px;color:#74d4cc;")
@@ -59,6 +62,7 @@ class PreviewPanel(QWidget):
             self.desc.setText("")
             self.issues.setText("")
             self.img.setText("N/A")
+            self._current_image_path = ''
             return
 
         self.name.setText(info.name)
@@ -83,14 +87,27 @@ class PreviewPanel(QWidget):
         self.desc.setText(
             info.description[:2000] if info.description else "No description.")
 
-        if info.preview_image and Path(info.preview_image).exists():
-            pm = QPixmap(info.preview_image)
+        self._current_image_path = info.preview_image or ''
+        self._load_preview_image()
+
+    def _load_preview_image(self):
+        """Load and scale the preview image to fit the current widget width."""
+        path = self._current_image_path
+        if path and Path(path).exists():
+            pm = QPixmap(path)
             if not pm.isNull():
-                w = self.img.width()
-                target_w = w - 4 if w > 60 else 220
+                w = max(self.img.width() - 4, 60)
+                h = self.img.maximumHeight() - 4
                 self.img.setPixmap(pm.scaled(
-                    target_w, 94,
+                    w, h,
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation))
                 return
+        self.img.clear()
         self.img.setText("No preview")
+
+    def resizeEvent(self, event):
+        """Reload preview image at new size when panel is resized."""
+        super().resizeEvent(event)
+        if self._current_image_path:
+            self._load_preview_image()

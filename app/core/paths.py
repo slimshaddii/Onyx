@@ -6,20 +6,24 @@ Directory structure:
 """
 
 import os
+import platform
 from pathlib import Path
 
 
-# ── FIX #1: Single source of truth for settings file location ────
 def settings_path() -> Path:
-    """Path to the application settings JSON file."""
     return Path(__file__).parent.parent.parent / 'data' / 'app_settings.json'
 
 
 def get_default_data_root() -> Path:
-    if os.name == 'nt':
+    system = platform.system()
+    if system == 'Windows':
         base = Path(os.environ.get('LOCALAPPDATA', str(Path.home())))
+    elif system == 'Darwin':
+        base = Path.home() / 'Library' / 'Application Support'
     else:
-        base = Path.home() / '.local' / 'share'
+        # Linux — respect XDG_DATA_HOME
+        base = Path(os.environ.get('XDG_DATA_HOME',
+                    str(Path.home() / '.local' / 'share')))
     return base / 'OnyxLauncher'
 
 
@@ -54,7 +58,15 @@ def logs_dir(root: Path) -> Path:
 
 def get_default_rw_data() -> Path:
     """Default RimWorld save data location (without -savedatafolder)."""
-    if os.name == 'nt':
+    system = platform.system()
+    if system == 'Windows':
         appdata = Path(os.environ.get('APPDATA', str(Path.home())))
-        return appdata / '..' / 'LocalLow' / 'Ludeon Studios' / 'RimWorld by Ludeon Studios'
-    return Path.home() / '.config' / 'unity3d' / 'Ludeon Studios' / 'RimWorld by Ludeon Studios'
+        return (appdata / '..' / 'LocalLow' /
+                'Ludeon Studios' / 'RimWorld by Ludeon Studios')
+    elif system == 'Darwin':
+        return (Path.home() / 'Library' / 'Application Support' /
+                'RimWorld by Ludeon Studios')
+    else:
+        # Linux
+        return (Path.home() / '.config' / 'unity3d' /
+                'Ludeon Studios' / 'RimWorld by Ludeon Studios')

@@ -153,11 +153,32 @@ class ModContext:
                     lst.takeItem(i)
                     break
 
-        try:
-            shutil.rmtree(str(mod_path))
-        except Exception as e:
-            QMessageBox.critical(self, "Delete Failed", str(e))
-            return
+        from app.core.app_settings import AppSettings
+        from app.core.mod_linker import delete_mod_permanently
+        _s = AppSettings.instance()
+
+        workshop_id   = info.workshop_id or info.path.name
+        onyx_mods_dir = Path(_s.data_root) / 'mods' if _s.data_root else None
+        game_mods_dir = (Path(_s.rimworld_exe).parent / 'Mods'
+                         if _s.rimworld_exe else None)
+
+        if onyx_mods_dir:
+            result = delete_mod_permanently(
+                workshop_id=workshop_id,
+                onyx_mods_dir=onyx_mods_dir,
+                game_mods_dir=game_mods_dir or Path(),
+                steamcmd_path=_s.steamcmd_path)
+            if result['errors']:
+                QMessageBox.warning(
+                    self, "Delete",
+                    "Deleted with warnings:\n" +
+                    "\n".join(result['errors']))
+        else:
+            try:
+                shutil.rmtree(str(mod_path))
+            except Exception as e:
+                QMessageBox.critical(self, "Delete Failed", str(e))
+                return
 
         self.all_mods = self.rw.get_installed_mods(force_rescan=True,
                                                     max_age_seconds=0)

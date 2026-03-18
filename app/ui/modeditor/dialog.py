@@ -10,8 +10,6 @@ from PyQt6.QtCore import Qt
 from app.core.instance import Instance
 from app.core.rimworld import RimWorldDetector
 from app.core.modlist import read_mods_config, VANILLA_AND_DLCS
-from app.core.paths import settings_path
-from app.utils.file_utils import load_json
 
 from app.ui.modeditor.drag_list import DragDropList
 from app.ui.modeditor.preview_panel import PreviewPanel
@@ -108,6 +106,32 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
         lo.addWidget(sp, 1)
 
         lo.addLayout(self._build_bottom_bar())
+        self._install_shortcuts()
+
+    def _install_shortcuts(self):
+        from PyQt6.QtGui import QShortcut, QKeySequence
+        from PyQt6.QtCore import Qt
+
+        # Ctrl+S — Save
+        QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self._save)
+
+        # Ctrl+Z — Undo via history rollback (opens history dialog)
+        QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(
+            self._open_history)
+
+        # Delete — Deactivate selected mods in active list
+        QShortcut(QKeySequence(Qt.Key.Key_Delete), self).activated.connect(
+            self._deactivate_selected_if_active_focused)
+
+        # Ctrl+A — Select all in whichever list has focus
+        # (QListView handles Ctrl+A natively for selection,
+        #  so we don't need to override it)
+
+    def _deactivate_selected_if_active_focused(self):
+        """Delete key deactivates selected mods only when active list has focus."""
+        if self.active.hasFocus():
+            self._rem_sel()
+
 
     def _build_filter_row(self) -> QHBoxLayout:
         row = QHBoxLayout()

@@ -50,6 +50,13 @@ class Launcher:
             return LaunchResult(
                 False,
                 f"RimWorld executable not found: {self.rimworld_exe}")
+        
+        if os.name != 'nt':
+            import stat
+            exe_path    = Path(self.rimworld_exe)
+            current_mode = exe_path.stat().st_mode
+            exe_path.chmod(current_mode |
+                        stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
         # ── 1: Prepare instance directories ──────────────────────────────
         config_dir = instance.path / 'Config'
