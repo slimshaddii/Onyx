@@ -18,12 +18,14 @@ class PreviewPanel(QWidget):
         self.img = QLabel()
         self.img.setFixedHeight(100)
         self.img.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.img.setStyleSheet("background:#111120;border-radius:6px;")
+        self.img.setStyleSheet("background:#1a1a1a;border-radius:6px;")
         self.img.setText("Select a mod")
         lo.addWidget(self.img)
 
+        # Name uses teal accent (#74d4cc) — consistent with Prism palette
         self.name = QLabel("")
-        self.name.setStyleSheet("font-weight:bold;font-size:12px;color:#7c8aff;")
+        self.name.setStyleSheet(
+            "font-weight:bold;font-size:12px;color:#74d4cc;")
         self.name.setWordWrap(True)
         lo.addWidget(self.name)
 
@@ -41,7 +43,8 @@ class PreviewPanel(QWidget):
         self.desc = QLabel("")
         self.desc.setWordWrap(True)
         self.desc.setStyleSheet("font-size:11px;color:#aaa;")
-        self.desc.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.desc.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(self.desc)
@@ -59,6 +62,7 @@ class PreviewPanel(QWidget):
             return
 
         self.name.setText(info.name)
+
         parts = [f"ID: {info.package_id}", f"By: {info.author}"]
         if info.supported_versions:
             parts.append(f"v{', '.join(info.supported_versions)}")
@@ -69,12 +73,15 @@ class PreviewPanel(QWidget):
 
         if badges:
             html = '<br>'.join(
-                f"<span style='color:{b[1]}'>{b[0]} {b[3]}</span>" for b in badges)
+                f"<span style='color:{b[1]}'>{b[0]} {b[3]}</span>"
+                for b in badges)
             self.issues.setText(html)
         else:
-            self.issues.setText("<span style='color:#4CAF50'>✔ No issues</span>")
+            self.issues.setText(
+                "<span style='color:#4CAF50'>✔ No issues</span>")
 
-        self.desc.setText(info.description[:2000] if info.description else "No description.")
+        self.desc.setText(
+            info.description[:2000] if info.description else "No description.")
 
         if info.preview_image and Path(info.preview_image).exists():
             pm = QPixmap(info.preview_image)

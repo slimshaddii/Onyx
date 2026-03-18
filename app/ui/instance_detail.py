@@ -1,9 +1,12 @@
+import os
+import subprocess
+import threading
 from pathlib import Path
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTextEdit, QGroupBox, QGridLayout, QDialog, QLineEdit,
-    QFileDialog, QComboBox, QMessageBox, QScrollArea
+    QFileDialog, QComboBox, QMessageBox, QScrollArea,
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QTimer
 from app.core.instance import Instance
@@ -14,12 +17,12 @@ from app.utils.file_utils import human_size, get_folder_size
 
 
 class InstanceDetailPanel(QWidget):
-    launch_requested = pyqtSignal(object)
-    edit_mods_requested = pyqtSignal(object)
-    duplicate_requested = pyqtSignal(object)
-    delete_requested = pyqtSignal(object)
+    launch_requested     = pyqtSignal(object)
+    edit_mods_requested  = pyqtSignal(object)
+    duplicate_requested  = pyqtSignal(object)
+    delete_requested     = pyqtSignal(object)
     export_pack_requested = pyqtSignal(object)
-    instance_updated = pyqtSignal()
+    instance_updated     = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -29,6 +32,7 @@ class InstanceDetailPanel(QWidget):
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
+
         self._notes_timer = QTimer(self)
         self._notes_timer.setSingleShot(True)
         self._notes_timer.setInterval(800)
@@ -36,8 +40,10 @@ class InstanceDetailPanel(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }")
 
         self.content = QWidget()
         self.cl = QVBoxLayout(self.content)
@@ -49,10 +55,11 @@ class InstanceDetailPanel(QWidget):
 
         self.path_label = QLabel("")
         self.path_label.setObjectName("statLabel")
-        self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.path_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
         self.cl.addWidget(self.path_label)
 
-        # Buttons row
+        # ── Action buttons ────────────────────────────────────────────────
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
 
@@ -88,15 +95,15 @@ class InstanceDetailPanel(QWidget):
 
         self.cl.addLayout(btn_row)
 
-        # Details
+        # ── Details grid ──────────────────────────────────────────────────
         det_group = QGroupBox("Details")
-        det_grid = QGridLayout()
+        det_grid  = QGridLayout()
         det_grid.setVerticalSpacing(6)
 
-        self._det_labels = {}
+        self._det_labels: dict[str, QLabel] = {}
         for row, key in enumerate([
             'Version', 'Active Mods', 'Inactive Mods', 'Save Files',
-            'Instance Size', 'Created', 'Last Played', 'Playtime'
+            'Instance Size', 'Created', 'Last Played', 'Playtime',
         ]):
             lbl = QLabel(f"{key}:")
             lbl.setStyleSheet("font-weight:bold; color:#8a8ea0;")
@@ -109,18 +116,19 @@ class InstanceDetailPanel(QWidget):
         self.cl.addWidget(det_group)
 
         self.missing_label = QLabel("")
-        self.missing_label.setStyleSheet("color:#c62828; font-weight:bold;")
+        self.missing_label.setStyleSheet(
+            "color:#c62828; font-weight:bold;")
         self.missing_label.setWordWrap(True)
         self.missing_label.hide()
         self.cl.addWidget(self.missing_label)
 
-        # Saves
+        # ── Saves ─────────────────────────────────────────────────────────
         saves_group = QGroupBox("Saves")
         self.saves_layout = QVBoxLayout()
         saves_group.setLayout(self.saves_layout)
         self.cl.addWidget(saves_group)
 
-        # Notes
+        # ── Notes ─────────────────────────────────────────────────────────
         notes_group = QGroupBox("Notes")
         nl = QVBoxLayout()
         self.notes_edit = QTextEdit()
@@ -136,7 +144,7 @@ class InstanceDetailPanel(QWidget):
         layout.addWidget(scroll)
         self._set_enabled(False)
 
-    def _set_enabled(self, on):
+    def _set_enabled(self, on: bool):
         for w in (self.launch_btn, self.edit_mods_btn, self.duplicate_btn,
                   self.delete_btn, self.folder_btn, self.notes_edit,
                   self.export_pack_btn):
@@ -159,35 +167,46 @@ class InstanceDetailPanel(QWidget):
         d['Active Mods'].setText(str(inst.mod_count))
         d['Inactive Mods'].setText(str(len(inst.inactive_mods)))
         d['Save Files'].setText(str(inst.save_count))
-        try:
-            import threading
-            def _calc_size():
-                try:
-                    size = get_folder_size(inst.path)
-                    d['Instance Size'].setText(human_size(size))
-                except Exception:
-                    d['Instance Size'].setText('—')
-            threading.Thread(target=_calc_size, daemon=True).start()
-        except Exception:
-            d['Instance Size'].setText('—')
+        d['Instance Size'].setText('…')   # placeholder while calculating
+
+        # ── Thread-safe folder size calculation ───────────────────────────
+        # get_folder_size() is slow on large instances; run on a daemon thread.
+        # Qt widgets MUST only be updated from the main thread, so we use
+        # QTimer.singleShot(0, ...) to marshal the setText call back.
+        size_label = d['Instance Size']
+        inst_path  = inst.path   # capture before thread starts
+
+        def _calc_size():
+            try:
+                size = get_folder_size(inst_path)
+                text = human_size(size)
+            except Exception:
+                text = '—'
+            # Marshal Qt update back to main thread
+            QTimer.singleShot(0, lambda: size_label.setText(text))
+
+        threading.Thread(target=_calc_size, daemon=True).start()
+
         d['Created'].setText(self._fmt_date(inst.created))
         d['Last Played'].setText(self._fmt_date(inst.last_played) or 'Never')
         h, m = divmod(inst.total_playtime_minutes, 60)
         d['Playtime'].setText(f"{h}h {m}m" if h else f"{m}m")
 
+        # ── Missing mods warning ──────────────────────────────────────────
         if rw and inst.mods:
             missing = rw.find_missing_mods(inst.mods)
             if missing:
                 self.missing_label.setText(
-                    f"⚠ {len(missing)} mod(s) missing: " +
-                    ", ".join(missing[:8]) +
-                    (f" +{len(missing)-8} more" if len(missing) > 8 else ""))
+                    f"⚠ {len(missing)} mod(s) missing: "
+                    + ", ".join(missing[:8])
+                    + (f" +{len(missing)-8} more" if len(missing) > 8 else ""))
                 self.missing_label.show()
             else:
                 self.missing_label.hide()
         else:
             self.missing_label.hide()
 
+        # ── Saves list ────────────────────────────────────────────────────
         while self.saves_layout.count():
             child = self.saves_layout.takeAt(0)
             if child.widget():
@@ -203,10 +222,12 @@ class InstanceDetailPanel(QWidget):
                 w.setLayout(row)
                 self.saves_layout.addWidget(w)
             if len(saves) > 8:
-                self.saves_layout.addWidget(QLabel(f"… +{len(saves)-8} more"))
+                self.saves_layout.addWidget(
+                    QLabel(f"… +{len(saves)-8} more"))
         else:
             self.saves_layout.addWidget(QLabel("No saves yet"))
 
+        # ── Notes ─────────────────────────────────────────────────────────
         self.notes_edit.blockSignals(True)
         self.notes_edit.setPlainText(inst.notes or '')
         self.notes_edit.blockSignals(False)
@@ -219,6 +240,8 @@ class InstanceDetailPanel(QWidget):
             return datetime.fromisoformat(iso).strftime("%b %d, %Y  %H:%M")
         except (ValueError, TypeError):
             return iso[:16]
+
+    # ── Signal emitters ───────────────────────────────────────────────────
 
     def _emit_launch(self):
         if self.current_instance:
@@ -241,13 +264,13 @@ class InstanceDetailPanel(QWidget):
             self.export_pack_requested.emit(self.current_instance)
 
     def _open_folder(self):
-        if self.current_instance:
-            import os, subprocess
-            p = str(self.current_instance.path)
-            if os.name == 'nt':
-                subprocess.Popen(['explorer', p])
-            else:
-                subprocess.Popen(['xdg-open', p])
+        if not self.current_instance:
+            return
+        p = str(self.current_instance.path)
+        if os.name == 'nt':
+            subprocess.Popen(['explorer', p])
+        else:
+            subprocess.Popen(['xdg-open', p])
 
     def _do_save_notes(self):
         if self.current_instance:
@@ -255,10 +278,12 @@ class InstanceDetailPanel(QWidget):
             self.current_instance.save()
 
 
+# ── New instance dialog ───────────────────────────────────────────────────────
+
 class NewInstanceDialog(QDialog):
     def __init__(self, parent, rw: RimWorldDetector, mgr: InstanceManager):
         super().__init__(parent)
-        self.rw = rw
+        self.rw  = rw
         self.mgr = mgr
         self.setWindowTitle("New Instance")
         self.setMinimumWidth(480)
@@ -286,18 +311,20 @@ class NewInstanceDialog(QDialog):
         self.tmpl.currentIndexChanged.connect(self._tmpl_changed)
         lo.addWidget(self.tmpl)
 
+        # Import file row
         self.import_row = QWidget()
         ir = QHBoxLayout(self.import_row)
         ir.setContentsMargins(0, 0, 0, 0)
         self.import_path = QLineEdit()
         self.import_path.setPlaceholderText("File path...")
         ir.addWidget(self.import_path)
-        b = QPushButton("Browse")
-        b.clicked.connect(self._browse_import)
-        ir.addWidget(b)
+        browse_btn = QPushButton("Browse")
+        browse_btn.clicked.connect(self._browse_import)
+        ir.addWidget(browse_btn)
         self.import_row.hide()
         lo.addWidget(self.import_row)
 
+        # Copy-from-instance row
         self.copy_row = QWidget()
         cr = QHBoxLayout(self.copy_row)
         cr.setContentsMargins(0, 0, 0, 0)
@@ -323,40 +350,40 @@ class NewInstanceDialog(QDialog):
         btns.addWidget(cancel)
         lo.addLayout(btns)
 
-    def _tmpl_changed(self, idx):
+    def _tmpl_changed(self, idx: int):
         self.import_row.setVisible(idx in (2, 3, 6))
         self.copy_row.setVisible(idx == 4)
-        if idx == 6:
-            self.name_in.setPlaceholderText("(set during import)")
-        else:
-            self.name_in.setPlaceholderText("My Playthrough")
+        self.name_in.setPlaceholderText(
+            "(set during import)" if idx == 6 else "My Playthrough")
 
     def _browse_import(self):
         idx = self.tmpl.currentIndex()
         if idx == 2:
-            p, _ = QFileDialog.getOpenFileName(self, "RimSort list", "", "Text (*.txt)")
+            p, _ = QFileDialog.getOpenFileName(
+                self, "RimSort list", "", "Text (*.txt)")
         elif idx == 6:
             p, _ = QFileDialog.getOpenFileName(
                 self, "Import .onyx", "",
                 "Onyx Packs (*.onyx);;All Files (*)")
         else:
-            p, _ = QFileDialog.getOpenFileName(self, "ModsConfig.xml", "", "XML (*.xml)")
+            p, _ = QFileDialog.getOpenFileName(
+                self, "ModsConfig.xml", "", "XML (*.xml)")
         if p:
             self.import_path.setText(p)
 
     def _create(self):
-        name = self.name_in.text().strip()
+        name  = self.name_in.text().strip()
         notes = self.notes_in.toPlainText().strip()
-        idx = self.tmpl.currentIndex()
+        idx   = self.tmpl.currentIndex()
 
+        # .onyx import — delegates to its own dialog
         if idx == 6:
             p = self.import_path.text().strip()
             if not p:
                 QMessageBox.warning(self, "Error", "Select an .onyx file.")
                 return
             from app.ui.onyxpack_dialog import OnyxImportDialog
-            dlg = OnyxImportDialog(self, Path(p), self.rw, self.mgr)
-            if dlg.exec():
+            if OnyxImportDialog(self, Path(p), self.rw, self.mgr).exec():
                 self.accept()
             return
 
@@ -367,17 +394,9 @@ class NewInstanceDialog(QDialog):
         try:
             if idx == 0:
                 self.mgr.create_vanilla_instance(name)
-                inst = Instance.load(self.mgr.instances_root / name)
-                if inst:
-                    inst.notes = notes
-                    inst.save()
             elif idx == 1:
                 dlcs = self.rw.get_detected_dlcs()
                 self.mgr.create_vanilla_instance(name, dlcs)
-                inst = Instance.load(self.mgr.instances_root / name)
-                if inst:
-                    inst.notes = notes
-                    inst.save()
             elif idx == 2:
                 p = self.import_path.text().strip()
                 if not p:
@@ -395,18 +414,26 @@ class NewInstanceDialog(QDialog):
                     return
                 from app.core.modlist import read_mods_config
                 mods, ver, _ = read_mods_config(Path(p).parent)
-                self.mgr.create_instance(name, mods=mods, version=ver, notes=notes)
+                self.mgr.create_instance(name, mods=mods,
+                                         version=ver, notes=notes)
             elif idx == 4:
                 src = self.copy_combo.currentData()
-                if src:
-                    new = self.mgr.duplicate_instance(src, name)
-                    new.notes = notes
-                    new.save()
-                else:
+                if not src:
                     QMessageBox.warning(self, "Error", "No instance to copy.")
                     return
+                new = self.mgr.duplicate_instance(src, name)
+                new.notes = notes
+                new.save()
             elif idx == 5:
                 self.mgr.create_instance(name, mods=[], notes=notes)
+
+            # Attach notes for templates that don't do it inline
+            if idx in (0, 1) and notes:
+                inst = Instance.load(self.mgr.instances_root / name)
+                if inst:
+                    inst.notes = notes
+                    inst.save()
+
             self.accept()
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))

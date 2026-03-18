@@ -22,7 +22,7 @@ class ModInfo:
     preview_image: str = ''
 
     @classmethod
-    def from_path(cls, mod_path: Path, source: str = 'local', 
+    def from_path(cls, mod_path: Path, source: str = 'local',
                   game_version: str = '1.6') -> Optional['ModInfo']:
         about_xml = None
         for candidate in [
@@ -44,117 +44,74 @@ class ModInfo:
             return None
 
         package_id = get_text(root, 'packageId', mod_path.name).lower().strip()
-        name = get_text(root, 'name', mod_path.name)
-        author = get_text(root, 'author', 'Unknown')
+        name       = get_text(root, 'name', mod_path.name)
+        author     = get_text(root, 'author', 'Unknown')
         description = get_text(root, 'description', '')
-        versions = get_list(root, 'supportedVersions')
+        versions   = get_list(root, 'supportedVersions')
 
-        # Parse game version for version-specific lookups
-        major_version = game_version.split('.')[0] + '.' + game_version.split('.')[1] if '.' in game_version else game_version
-        
-        # === DEPENDENCIES ===
-        deps = set()
-        
-        # Standard modDependencies
+        # Derive major.minor for version-specific tag lookups
+        parts = game_version.split('.')
+        major_version = f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else game_version
+
+        # ── Shared helper: extract package IDs from a *ByVersion element ──
+        def _extract_by_version(parent_elem, text_only: bool = False) -> set[str]:
+            """
+            Try exact version → major.minor → first child with matching major.
+            text_only=True  → read child.text directly (loadAfter/loadBefore style)
+            text_only=False → read <packageId> sub-element (modDependencies style)
+            """
+            result: set[str] = set()
+            if parent_elem is None:
+                return result
+            for ver_tag in dict.fromkeys([f'v{game_version}', f'v{major_version}']):
+                ver_elem = parent_elem.find(ver_tag)
+                if ver_elem is not None:
+                    for li in ver_elem.findall('li'):
+                        val = (li.text if text_only
+                               else get_text(li, 'packageId'))
+                        if val:
+                            result.add(val.lower().strip())
+                    return result
+            # Fallback: first child whose version starts with major number
+            major_num = major_version.split('.')[0]
+            for child in parent_elem:
+                if child.tag.lstrip('v').startswith(major_num):
+                    for li in child.findall('li'):
+                        val = (li.text if text_only
+                               else get_text(li, 'packageId'))
+                        if val:
+                            result.add(val.lower().strip())
+                    break
+            return result
+
+        # ── Dependencies ──────────────────────────────────────────────────
+        deps: set[str] = set()
         deps_elem = root.find('modDependencies')
         if deps_elem is not None:
             for dep in deps_elem.findall('li'):
                 dep_id = get_text(dep, 'packageId')
                 if dep_id:
                     deps.add(dep_id.lower().strip())
-        
-        # Version-specific modDependenciesByVersion
-        deps_by_ver = root.find('modDependenciesByVersion')
-        if deps_by_ver is not None:
-            # Try exact version match first, then major.minor
-            for ver_tag in dict.fromkeys([f'v{game_version}', f'v{major_version}']):
-                ver_elem = deps_by_ver.find(ver_tag)
-                if ver_elem is not None:
-                    for dep in ver_elem.findall('li'):
-                        dep_id = get_text(dep, 'packageId')
-                        if dep_id:
-                            deps.add(dep_id.lower().strip())
-                    break
-            else:
-                # Try any version that starts with major version
-                for child in deps_by_ver:
-                    tag_ver = child.tag.lstrip('v')
-                    if tag_ver.startswith(major_version.split('.')[0]):
-                        for dep in child.findall('li'):
-                            dep_id = get_text(dep, 'packageId')
-                            if dep_id:
-                                deps.add(dep_id.lower().strip())
-                        break
+        deps |= _extract_by_version(root.find('modDependenciesByVersion'),
+                                    text_only=False)
 
-        # === LOAD AFTER ===
-        load_after = set()
-        
-        # Standard loadAfter
-        for x in get_list(root, 'loadAfter'):
-            load_after.add(x.lower().strip())
-        
-        # Version-specific loadAfterByVersion
-        load_after_by_ver = root.find('loadAfterByVersion')
-        if load_after_by_ver is not None:
-            for ver_tag in dict.fromkeys([f'v{game_version}', f'v{major_version}']):
-                ver_elem = load_after_by_ver.find(ver_tag)
-                if ver_elem is not None:
-                    for li in ver_elem.findall('li'):
-                        if li.text:
-                            load_after.add(li.text.lower().strip())
-                    break
-            else:
-                for child in load_after_by_ver:
-                    tag_ver = child.tag.lstrip('v')
-                    if tag_ver.startswith(major_version.split('.')[0]):
-                        for li in child.findall('li'):
-                            if li.text:
-                                load_after.add(li.text.lower().strip())
-                        break
+        # ── Load after ────────────────────────────────────────────────────
+        load_after: set[str] = {x.lower().strip() for x in get_list(root, 'loadAfter')}
+        load_after |= _extract_by_version(root.find('loadAfterByVersion'),
+                                          text_only=True)
 
-        # === LOAD BEFORE ===
-        load_before = set()
-        
-        # Standard loadBefore
-        for x in get_list(root, 'loadBefore'):
-            load_before.add(x.lower().strip())
-        
-        # Version-specific loadBeforeByVersion
-        load_before_by_ver = root.find('loadBeforeByVersion')
-        if load_before_by_ver is not None:
-            for ver_tag in dict.fromkeys([f'v{game_version}', f'v{major_version}']):
-                ver_elem = load_before_by_ver.find(ver_tag)
-                if ver_elem is not None:
-                    for li in ver_elem.findall('li'):
-                        if li.text:
-                            load_before.add(li.text.lower().strip())
-                    break
-            else:
-                for child in load_before_by_ver:
-                    tag_ver = child.tag.lstrip('v')
-                    if tag_ver.startswith(major_version.split('.')[0]):
-                        for li in child.findall('li'):
-                            if li.text:
-                                load_before.add(li.text.lower().strip())
-                        break
+        # ── Load before ───────────────────────────────────────────────────
+        load_before: set[str] = {x.lower().strip() for x in get_list(root, 'loadBefore')}
+        load_before |= _extract_by_version(root.find('loadBeforeByVersion'),
+                                           text_only=True)
 
-        # === INCOMPATIBLE WITH ===
-        incompatible = set()
-        for x in get_list(root, 'incompatibleWith'):
-            incompatible.add(x.lower().strip())
-        
-        # Version-specific incompatibleWithByVersion
-        incompat_by_ver = root.find('incompatibleWithByVersion')
-        if incompat_by_ver is not None:
-            for ver_tag in dict.fromkeys([f'v{game_version}', f'v{major_version}']):
-                ver_elem = incompat_by_ver.find(ver_tag)
-                if ver_elem is not None:
-                    for li in ver_elem.findall('li'):
-                        if li.text:
-                            incompatible.add(li.text.lower().strip())
-                    break
+        # ── Incompatible with ─────────────────────────────────────────────
+        incompatible: set[str] = {x.lower().strip()
+                                   for x in get_list(root, 'incompatibleWith')}
+        incompatible |= _extract_by_version(root.find('incompatibleWithByVersion'),
+                                            text_only=True)
 
-        # === PREVIEW IMAGE ===
+        # ── Preview image ─────────────────────────────────────────────────
         preview = ''
         for pname in ['Preview.png', 'preview.png', 'Preview.jpg', 'preview.jpg']:
             pp = about_xml.parent / pname
@@ -162,9 +119,8 @@ class ModInfo:
                 preview = str(pp)
                 break
 
-        # === WORKSHOP ID ===
+        # ── Workshop ID ───────────────────────────────────────────────────
         workshop_id = ''
-        mod_root = about_xml.parent.parent
         for pid_name in ['PublishedFileId.txt', 'publishedfileid.txt']:
             pid_file = about_xml.parent / pid_name
             if pid_file.exists():
@@ -180,9 +136,9 @@ class ModInfo:
         return cls(
             package_id=package_id, name=name, author=author,
             description=description, path=mod_path,
-            supported_versions=versions, 
+            supported_versions=versions,
             dependencies=list(deps),
-            load_after=list(load_after), 
+            load_after=list(load_after),
             load_before=list(load_before),
             incompatible_with=list(incompatible),
             source=source, workshop_id=workshop_id,
@@ -192,7 +148,7 @@ class ModInfo:
 
 class RimWorldDetector:
     def __init__(self, game_path: Optional[str] = None):
-        self.game_path = Path(game_path) if game_path else None
+        self.game_path   = Path(game_path) if game_path else None
         self.exe_path: Optional[Path] = None
         self.version: str = ''
         self._mods_cache: dict[str, ModInfo] = {}
@@ -228,24 +184,23 @@ class RimWorldDetector:
         self._mods_cache.clear()
 
     def get_game_version_short(self) -> str:
-        """Get major.minor version (e.g., '1.6' from '1.6.4630 rev467')."""
+        """Return major.minor (e.g. '1.6' from '1.6.4630 rev467')."""
         if self.version:
             parts = self.version.split('.')
             if len(parts) >= 2:
                 return f"{parts[0]}.{parts[1]}"
-        return '1.6'  # Default fallback
+        return '1.6'
 
     def get_installed_mods(self, extra_mod_paths: Optional[list[str]] = None,
                            force_rescan: bool = False) -> dict[str, ModInfo]:
-        # Store extra paths so they persist across calls
         if extra_mod_paths is not None:
             self._extra_paths = list(extra_mod_paths)
 
         if self._mods_cache and not force_rescan:
             return self._mods_cache
 
-        mods = {}
-        scanned = set()
+        mods: dict[str, ModInfo] = {}
+        scanned: set[str] = set()
         game_ver = self.get_game_version_short()
 
         def scan(dirpath: Path, source: str):
@@ -258,7 +213,8 @@ class RimWorldDetector:
                 for mod_dir in dirpath.iterdir():
                     if not mod_dir.is_dir():
                         continue
-                    info = ModInfo.from_path(mod_dir, source=source, game_version=game_ver)
+                    info = ModInfo.from_path(mod_dir, source=source,
+                                            game_version=game_ver)
                     if info and info.package_id not in mods:
                         mods[info.package_id] = info
                         found += 1
@@ -266,19 +222,17 @@ class RimWorldDetector:
                 pass
             print(f"[ModScan] {dirpath} -> {found} mods (source={source})")
 
-        # Game data
         if self.game_path:
             scan(self.game_path / 'Data', 'dlc')
             scan(self.game_path / 'Mods', 'local')
 
-        # All extra paths
         for ep in self._extra_paths:
             p = Path(ep)
             if p.exists():
                 ep_lower = str(p).lower()
-                source = 'local'
-                if 'workshop' in ep_lower or 'onyx' in ep_lower:
-                    source = 'workshop'
+                source = ('workshop'
+                          if ('workshop' in ep_lower or 'onyx' in ep_lower)
+                          else 'local')
                 scan(p, source)
 
         self._mods_cache = mods

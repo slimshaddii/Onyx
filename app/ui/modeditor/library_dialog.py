@@ -2,10 +2,9 @@
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QListWidget, QListWidgetItem, QAbstractItemView
+    QPushButton, QListWidget, QListWidgetItem, QAbstractItemView,
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
 
 from app.core.rimworld import ModInfo
 from app.core.modlist import VANILLA_AND_DLCS
@@ -17,9 +16,9 @@ class LibraryDialog(QDialog):
     def __init__(self, parent, all_mods: dict[str, ModInfo],
                  instance_mod_ids: set[str], game_version: str = ''):
         super().__init__(parent)
-        self.all_mods = all_mods
+        self.all_mods         = all_mods
         self.instance_mod_ids = instance_mod_ids
-        self.game_version = game_version
+        self.game_version     = game_version
         self.selected_ids: list[str] = []
 
         self.setWindowTitle("Mod Library — Add to Instance")
@@ -35,8 +34,8 @@ class LibraryDialog(QDialog):
             "<b>Mod Library</b> — Select mods to add to this instance"))
 
         hint = QLabel(
-            "These mods are installed on your system but not yet part of this instance. "
-            "Select mods and click 'Add to Instance'.")
+            "These mods are installed on your system but not yet part of "
+            "this instance. Select mods and click 'Add to Instance'.")
         hint.setWordWrap(True)
         hint.setStyleSheet("color:#888;font-size:11px;")
         lo.addWidget(hint)
@@ -47,7 +46,8 @@ class LibraryDialog(QDialog):
         lo.addWidget(self.search)
 
         self.mod_list = QListWidget()
-        self.mod_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.mod_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection)
         lo.addWidget(self.mod_list, 1)
 
         self.count_label = QLabel("")
@@ -56,7 +56,8 @@ class LibraryDialog(QDialog):
 
         btns = QHBoxLayout()
         self.sel_label = QLabel("0 selected")
-        self.sel_label.setStyleSheet("color:#7c8aff;font-size:11px;font-weight:bold;")
+        self.sel_label.setStyleSheet(
+            "color:#74d4cc;font-size:11px;font-weight:bold;")
         btns.addWidget(self.sel_label)
         btns.addStretch()
         cancel_btn = QPushButton("Cancel")
@@ -74,23 +75,22 @@ class LibraryDialog(QDialog):
         self.mod_list.clear()
         count = 0
 
-        for mid, info in sorted(self.all_mods.items(), key=lambda x: x[1].name.lower()):
-            # Skip mods already in this instance
+        for mid, info in sorted(self.all_mods.items(),
+                                 key=lambda x: x[1].name.lower()):
             if mid in self.instance_mod_ids:
                 continue
-            # Skip DLCs/Core — they're auto-available
             if mid in VANILLA_AND_DLCS:
                 continue
 
-            src = {'dlc': '👑', 'workshop': '🏪', 'local': '📁'}.get(info.source, '📁')
+            src = {'dlc': '👑', 'workshop': '🏪', 'local': '📁'}.get(
+                info.source, '📁')
             it = QListWidgetItem(f"{src}  {info.name}  [{mid}]")
             it.setData(Qt.ItemDataRole.UserRole, mid)
-
-            if info.workshop_id:
-                it.setToolTip(f"{info.name}\nBy: {info.author}\nWorkshop: {info.workshop_id}")
-            else:
-                it.setToolTip(f"{info.name}\nBy: {info.author}\nSource: {info.source}")
-
+            it.setToolTip(
+                f"{info.name}\nBy: {info.author}\n"
+                + (f"Workshop: {info.workshop_id}"
+                   if info.workshop_id else f"Source: {info.source}")
+            )
             self.mod_list.addItem(it)
             count += 1
 
@@ -99,7 +99,8 @@ class LibraryDialog(QDialog):
     def _filter(self):
         q = self.search.text().lower()
         for i in range(self.mod_list.count()):
-            self.mod_list.item(i).setHidden(q not in self.mod_list.item(i).text().lower())
+            item = self.mod_list.item(i)
+            item.setHidden(q not in item.text().lower())
 
     def _on_sel_changed(self):
         n = len(self.mod_list.selectedItems())
@@ -110,6 +111,5 @@ class LibraryDialog(QDialog):
             it.data(Qt.ItemDataRole.UserRole)
             for it in self.mod_list.selectedItems()
         ]
-        if not self.selected_ids:
-            return
-        self.accept()
+        if self.selected_ids:
+            self.accept()

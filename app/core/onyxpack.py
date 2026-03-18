@@ -1,6 +1,6 @@
 """
 .onyx format — Onyx Launcher modpack sharing.
-ZIP-based containing manifest, mod list, load order, optional config/icon.
+ZIP-based: manifest.json + modlist.json + load_order.json + optional config/icon.
 """
 
 import json
@@ -14,100 +14,91 @@ from app.core.instance import Instance
 from app.core.rimworld import ModInfo
 
 ONYX_FORMAT_VERSION = 1
-ONYX_VERSION = "1.0"
-ONYX_EXTENSION = ".onyx"
-ONYX_MAGIC = "onyx-modpack-v1"
+ONYX_VERSION        = "1.0"
+ONYX_EXTENSION      = ".onyx"
+ONYX_MAGIC          = "onyx-modpack-v1"
 
 
 @dataclass
 class OnyxManifest:
-    format_version: int = ONYX_FORMAT_VERSION
-    magic: str = ONYX_MAGIC
-    name: str = ''
-    author: str = ''
-    description: str = ''
-    created: str = ''
+    format_version: int  = ONYX_FORMAT_VERSION
+    magic: str           = ONYX_MAGIC
+    name: str            = ''
+    author: str          = ''
+    description: str     = ''
+    created: str         = ''
     rimworld_version: str = ''
-    mod_count: int = 0
-    onyx_version: str = ONYX_VERSION
+    mod_count: int       = 0
+    onyx_version: str    = ONYX_VERSION
 
 
 @dataclass
 class OnyxMod:
-    id: str
-    name: str
-    workshop_id: str = ''
-    source: str = ''
-    required: bool = True
+    id:          str
+    name:        str
+    workshop_id: str  = ''
+    source:      str  = ''
+    required:    bool = True
 
 
 @dataclass
 class OnyxPreview:
-    manifest: OnyxManifest
-    mods: list[OnyxMod]
-    load_order: list[str]
-    has_config: bool = False
-    has_icon: bool = False
-    missing_mods: list[OnyxMod] = field(default_factory=list)
-    installed_mods: list[OnyxMod] = field(default_factory=list)
-    valid: bool = True
-    error: str = ''
+    manifest:        OnyxManifest
+    mods:            list[OnyxMod]
+    load_order:      list[str]
+    has_config:      bool          = False
+    has_icon:        bool          = False
+    missing_mods:    list[OnyxMod] = field(default_factory=list)
+    installed_mods:  list[OnyxMod] = field(default_factory=list)
+    valid:           bool          = True
+    error:           str           = ''
 
+
+# ── Export ─────────────────────────────────────────────────────────────────────
 
 def export_onyx(instance: Instance, output_path: Path,
                 all_mods: dict[str, ModInfo],
                 include_config: bool = False,
                 author: str = '',
                 description: str = '') -> tuple[bool, str]:
-    """Export an instance as a .onyx file."""
+    """Export an instance as a .onyx ZIP file."""
     try:
         manifest = {
             'format_version': ONYX_FORMAT_VERSION,
-            'magic': ONYX_MAGIC,
-            'name': instance.name,
-            'author': author,
-            'description': description or instance.notes or '',
-            'created': datetime.now().isoformat(),
+            'magic':           ONYX_MAGIC,
+            'name':            instance.name,
+            'author':          author,
+            'description':     description or instance.notes or '',
+            'created':         datetime.now().isoformat(),
             'rimworld_version': instance.rimworld_version or '',
-            'mod_count': len(instance.mods),
-            'onyx_version': ONYX_VERSION,
+            'mod_count':       len(instance.mods),
+            'onyx_version':    ONYX_VERSION,
         }
 
-        mods = []
-        for mid in instance.mods:
+        def _mod_entry(mid: str, required: bool) -> dict:
             info = all_mods.get(mid)
-            mods.append({
-                'id': mid,
-                'name': info.name if info else mid,
+            return {
+                'id':          mid,
+                'name':        info.name        if info else mid,
                 'workshop_id': info.workshop_id if info else '',
-                'source': info.source if info else 'unknown',
-                'required': True,
-            })
+                'source':      info.source      if info else 'unknown',
+                'required':    required,
+            }
 
-        # Also include inactive mods as non-required
-        for mid in instance.inactive_mods:
-            info = all_mods.get(mid)
-            mods.append({
-                'id': mid,
-                'name': info.name if info else mid,
-                'workshop_id': info.workshop_id if info else '',
-                'source': info.source if info else 'unknown',
-                'required': False,
-            })
-
-        load_order = list(instance.mods)
+        mods = (
+            [_mod_entry(mid, True)  for mid in instance.mods] +
+            [_mod_entry(mid, False) for mid in instance.inactive_mods]
+        )
 
         with zipfile.ZipFile(str(output_path), 'w', zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr('manifest.json', json.dumps(manifest, indent=2))
-            zf.writestr('modlist.json', json.dumps({'mods': mods}, indent=2))
-            zf.writestr('load_order.json', json.dumps(load_order, indent=2))
+            zf.writestr('manifest.json',   json.dumps(manifest,            indent=2))
+            zf.writestr('modlist.json',    json.dumps({'mods': mods},      indent=2))
+            zf.writestr('load_order.json', json.dumps(list(instance.mods), indent=2))
 
-            if include_config:
-                config_dir = instance.config_dir
-                if config_dir.exists():
-                    for cf in config_dir.iterdir():
-                        if cf.is_file():
-                            zf.write(str(cf), f'config/{cf.name}')
+            if include_config and instance.config_dir.exists():
+                for cf in instance.config_dir.iterdir():
+                    if cf.is_file():
+                        zf.write(str(cf), f'config/{cf.name}')
 
             for ext in ('png', 'jpg', 'jpeg', 'ico'):
                 icon_path = instance.path / f'icon.{ext}'
@@ -116,13 +107,17 @@ def export_onyx(instance: Instance, output_path: Path,
                     break
 
         total = len(instance.mods) + len(instance.inactive_mods)
-        return True, f"Exported {total} mods ({len(instance.mods)} active) to {output_path.name}"
+        return (True,
+                f"Exported {total} mods "
+                f"({len(instance.mods)} active) to {output_path.name}")
     except Exception as e:
         return False, f"Export failed: {e}"
 
 
+# ── Peek (read without extract) ────────────────────────────────────────────────
+
 def peek_onyx(path: Path) -> OnyxPreview:
-    """Read a .onyx without full extraction."""
+    """Read a .onyx file's metadata without full extraction."""
     preview = OnyxPreview(manifest=OnyxManifest(), mods=[], load_order=[])
 
     try:
@@ -146,10 +141,12 @@ def peek_onyx(path: Path) -> OnyxPreview:
 
             md = json.loads(zf.read('manifest.json'))
 
-            # Validate magic
-            if md.get('magic') and md['magic'] != ONYX_MAGIC:
+            # Always validate the magic field — reject unknown or missing values
+            if md.get('magic') != ONYX_MAGIC:
                 preview.valid = False
-                preview.error = f"Unknown format: {md.get('magic')}"
+                preview.error = (
+                    f"Unknown or missing magic: '{md.get('magic', '<none>')}'"
+                    f" (expected '{ONYX_MAGIC}')")
                 return preview
 
             preview.manifest = OnyxManifest(
@@ -179,25 +176,28 @@ def peek_onyx(path: Path) -> OnyxPreview:
                 preview.load_order = json.loads(zf.read('load_order.json'))
 
             preview.has_config = any(n.startswith('config/') for n in names)
-            preview.has_icon = any(n.startswith('icon.') for n in names)
+            preview.has_icon   = any(n.startswith('icon.')   for n in names)
 
     except json.JSONDecodeError as e:
         preview.valid = False
-        preview.error = f"Invalid JSON: {e}"
+        preview.error = f"Invalid JSON in pack: {e}"
     except zipfile.BadZipFile:
         preview.valid = False
         preview.error = "Corrupted .onyx file"
     except Exception as e:
         preview.valid = False
-        preview.error = f"Error: {e}"
+        preview.error = f"Error reading pack: {e}"
 
     return preview
 
 
+# ── Mod availability check ─────────────────────────────────────────────────────
+
 def check_onyx_mods(preview: OnyxPreview,
                     installed_mods: dict[str, ModInfo]) -> OnyxPreview:
+    """Partition preview.mods into installed_mods / missing_mods."""
     preview.installed_mods = []
-    preview.missing_mods = []
+    preview.missing_mods   = []
     for mod in preview.mods:
         if mod.id in installed_mods:
             preview.installed_mods.append(mod)
@@ -206,54 +206,67 @@ def check_onyx_mods(preview: OnyxPreview,
     return preview
 
 
+# ── Import ─────────────────────────────────────────────────────────────────────
+
 def import_onyx(onyx_path: Path,
                 instance_manager,
                 instance_name: str,
-                install_config: bool = True) -> tuple[Optional[Instance], list[OnyxMod], str]:
-    """Import a .onyx as a new instance with isolated mod lists."""
-    from app.core.modlist import write_mods_config
+                install_config: bool = True
+                ) -> tuple[Optional[Instance], list[OnyxMod], str]:
+    """
+    Import a .onyx pack as a new instance.
 
+    Returns (instance, missing_mods, error_string).
+    On failure, instance is None and error_string is non-empty.
+    """
     preview = peek_onyx(onyx_path)
     if not preview.valid:
         return None, [], preview.error
 
     try:
-        # Separate active (required) and inactive (not required) mods
-        active_ids = preview.load_order if preview.load_order else [
-            m.id for m in preview.mods if m.required]
-        inactive_ids = [m.id for m in preview.mods if not m.required and m.id not in set(active_ids)]
+        # Active mods come from load_order; inactive from required=False entries
+        active_ids = (preview.load_order
+                      if preview.load_order
+                      else [m.id for m in preview.mods if m.required])
+        active_set   = set(active_ids)
+        inactive_ids = [m.id for m in preview.mods
+                        if not m.required and m.id not in active_set]
 
+        notes = "\n".join(filter(None, [
+            f"Imported from: {onyx_path.name}",
+            f"Author: {preview.manifest.author}" if preview.manifest.author else '',
+            preview.manifest.description,
+        ]))
+
+        # create_instance writes ModsConfig.xml internally
         inst = instance_manager.create_instance(
             name=instance_name,
             mods=active_ids,
             version=preview.manifest.rimworld_version or '1.6',
-            notes=(f"Imported from: {onyx_path.name}\n"
-                   f"Author: {preview.manifest.author}\n"
-                   f"{preview.manifest.description}").strip(),
+            notes=notes.strip(),
         )
 
-        # Set inactive mods for isolation
         inst.inactive_mods = inactive_ids
         inst.save()
 
+        # Extract optional config files
         if install_config and preview.has_config:
             with zipfile.ZipFile(str(onyx_path), 'r') as zf:
                 for name in zf.namelist():
                     if name.startswith('config/') and len(name) > len('config/'):
                         filename = name[len('config/'):]
-                        target = inst.config_dir / filename
+                        target   = inst.config_dir / filename
                         target.parent.mkdir(parents=True, exist_ok=True)
-                        with zf.open(name) as src, open(str(target), 'wb') as dst:
-                            dst.write(src.read())
+                        target.write_bytes(zf.read(name))
 
+        # Extract optional icon
         if preview.has_icon:
             with zipfile.ZipFile(str(onyx_path), 'r') as zf:
                 for name in zf.namelist():
                     if name.startswith('icon.'):
-                        ext = name.split('.')[-1]
+                        ext    = name.rsplit('.', 1)[-1]
                         target = inst.path / f'icon.{ext}'
-                        with zf.open(name) as src, open(str(target), 'wb') as dst:
-                            dst.write(src.read())
+                        target.write_bytes(zf.read(name))
                         break
 
         return inst, preview.missing_mods, ''
