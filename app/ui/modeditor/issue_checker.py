@@ -1,15 +1,27 @@
-"""Issue analysis: missing deps, version mismatch, load order violations."""
+"""Issue analysis: missing deps, version mismatch, load order violations,
+incompatible mods, and JuMLi community conflict/performance notices."""
 
 from app.core.rimworld import RimWorldDetector, ModInfo
 from app.core.dep_resolver import analyze_modlist, get_downloadable_deps, get_activatable_deps
 
 
 # ── Color palette ─────────────────────────────────────────────────────────────
-COLOR_ERROR      = '#ff4444'
-COLOR_DEPENDENCY = '#ff8800'
-COLOR_WARNING    = '#ff8800'
-COLOR_ORDER      = '#ffaa00'
-COLOR_VERSION    = '#ff8800'
+COLOR_ERROR       = '#ff4444'   # Red    — not on disk, hard missing dep, incompatible
+COLOR_DEPENDENCY  = '#ff8800'   # Orange — dep not active, version mismatch, alternative
+COLOR_WARNING     = '#ff8800'   # Orange — alias
+COLOR_ORDER       = '#ffaa00'   # Yellow — load-order violation, performance notice
+COLOR_VERSION     = '#ff8800'   # Orange — version mismatch
+COLOR_INFO        = '#888888'   # Grey   — info/settings advice
+
+
+# ── Notice type → (color, severity_tag) ──────────────────────────────────────
+_NOTICE_MAP = {
+    'incompatible': (COLOR_ERROR,      'error'),
+    'unstable':     (COLOR_DEPENDENCY, 'warning'),
+    'alternative':  (COLOR_DEPENDENCY, 'warning'),
+    'performance':  (COLOR_ORDER,      'order'),
+    'info':         (COLOR_INFO,       'info'),
+}
 
 
 def get_badges(mid: str, all_mods: dict[str, ModInfo], active_ids: set[str],
@@ -20,21 +32,16 @@ def get_badges(mid: str, all_mods: dict[str, ModInfo], active_ids: set[str],
     """
     Return (icon, color, severity, message) list for one mod.
 
-    Parameters
-    ----------
-    ignored_deps : set of "mod_id:dep_id" strings.
-        Any dep whose key is in this set is silently skipped.
-        Populated from Instance.ignored_deps by the caller.
-
     Severity tags
     -------------
-    'error'   — red:    not on disk, hard missing dep
+    'error'   — red:    not on disk, hard missing dep, incompatibleWith
     'dep'     — orange: dep on disk but not active
-    'warning' — orange: version mismatch
-    'order'   — yellow: load-order violation
+    'warning' — orange: version mismatch, unstable, alternative
+    'order'   — yellow: load-order violation, performance notice
+    'info'    — grey:   settings advice
     """
-    badges      = []
-    info        = all_mods.get(mid)
+    badges       = []
+    info         = all_mods.get(mid)
     ignored_deps = ignored_deps or set()
 
     # ── Not on disk ───────────────────────────────────────────────────────────
@@ -47,8 +54,7 @@ def get_badges(mid: str, all_mods: dict[str, ModInfo], active_ids: set[str],
         if dep not in active_ids:
             dep_key = f"{mid}:{dep}"
             if dep_key in ignored_deps:
-                continue                        # user suppressed this warning
-
+                continue
             on_disk  = dep in all_mods
             dep_name = all_mods[dep].name if on_disk else dep
             if on_disk:
@@ -62,6 +68,17 @@ def get_badges(mid: str, all_mods: dict[str, ModInfo], active_ids: set[str],
                     f"Needs '{dep_name}' (declared in About.xml, NOT INSTALLED)",
                 ))
 
+    # ── Task 8.2 — incompatibleWith from About.xml ───────────────────────────
+    for incompat in info.incompatible_with:
+        incompat_l = incompat.lower()
+        if incompat_l in active_ids:
+            incompat_name = (all_mods[incompat_l].name
+                             if incompat_l in all_mods else incompat_l)
+            badges.append((
+                '🚫', COLOR_ERROR, 'error',
+                f"Incompatible with '{incompat_name}' (declared in About.xml)",
+            ))
+
     # ── Version mismatch ──────────────────────────────────────────────────────
     if not check_version(info, game_version):
         badges.append((
@@ -74,6 +91,24 @@ def get_badges(mid: str, all_mods: dict[str, ModInfo], active_ids: set[str],
         _pos         = _pos_cache or {m: i for i, m in enumerate(active_order)}
         order_issues = check_load_order(mid, info, active_order, all_mods, _pos)
         badges.extend(order_issues or [])
+
+    # ── Task 8.6 — JuMLi community notices ───────────────────────────────────
+    try:
+        from app.core.conflict_db import ConflictDB
+        db      = ConflictDB.instance()
+        notices = db.get_notices(mid, info.workshop_id or '')
+        for notice in notices:
+            color, sev = _NOTICE_MAP.get(
+                notice.notice_type, (COLOR_INFO, 'info'))
+            icon = {
+                'unstable':    '⚠',
+                'performance': '🐢',
+                'alternative': '💡',
+                'info':        'ℹ',
+            }.get(notice.notice_type, 'ℹ')
+            badges.append((icon, color, sev, notice.message))
+    except Exception:
+        pass   # DB load failure must never break badge rendering
 
     return badges
 
@@ -126,10 +161,10 @@ def count_issues(mod_ids: list[str], all_mods: dict[str, ModInfo],
                  ignored_deps: set[str] | None = None,
                  ) -> tuple[int, int, int]:
     """Return (errors, warnings, order_issues)."""
-    active        = set(mod_ids)
-    errors        = warnings = order_issues = 0
-    _pos          = {m: i for i, m in enumerate(mod_ids)}
-    ignored_deps  = ignored_deps or set()
+    active       = set(mod_ids)
+    errors       = warnings = order_issues = 0
+    _pos         = {m: i for i, m in enumerate(mod_ids)}
+    ignored_deps = ignored_deps or set()
 
     for mid in mod_ids:
         for badge in get_badges(mid, all_mods, active, game_version,
@@ -139,7 +174,7 @@ def count_issues(mod_ids: list[str], all_mods: dict[str, ModInfo],
                 errors += 1
             elif sev in ('dep', 'warning'):
                 warnings += 1
-            elif sev == 'order':
+            elif sev in ('order', 'info'):
                 order_issues += 1
 
     return errors, warnings, order_issues

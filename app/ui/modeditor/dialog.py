@@ -197,6 +197,7 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
         b.addWidget(self._btn("Auto-Sort",  self._sort,        "primaryButton"))
         b.addWidget(self._btn("Fix Issues", self._fix,         "primaryButton"))
         b.addWidget(self._btn("History",    self._open_history))
+        b.addWidget(self._btn("Conflicts",  self._open_conflicts))
         b.addWidget(self._btn("Vanilla",    self._vanilla,     "dangerButton"))
         b.addWidget(self._btn("Import",     self._import_file))
         b.addWidget(self._btn("Export",     self._export))
@@ -373,6 +374,17 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
             self, "Rolled Back",
             f"Loaded {len(mods)} mods from snapshot.\n\n"
             "Click Save to apply, or Cancel to discard.")
+        
+    # ── Conflicts ─────────────────────────────────────────────────────────────
+
+    def _open_conflicts(self):
+        from app.ui.modeditor.conflict_dialog import ConflictReportDialog
+        dlg = ConflictReportDialog(
+            self,
+            active_ids=self.active.get_ids(),
+            all_mods=self.all_mods,
+            mod_names=self.names)
+        dlg.exec()   
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

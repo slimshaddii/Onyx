@@ -1,0 +1,588 @@
+{
+  "version": "2025-12-05",
+  "source": "JuMLi (Judge My List) — https://github.com/RonTube/JuMLi",
+  "records": [
+    {
+      "package_ids": ["ludeon.rimworld.anomaly"],
+      "workshop_ids": [],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "The DLC is known to hit TPS quite heavily, even if its content is not immediately present. If you are having issues with your TPS and are not planning on an Anomaly-focused run, seriously consider disabling it.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["jaxe.bubbles"],
+      "workshop_ids": [1516158345],
+      "notices": [
+        {
+          "type": "info",
+          "message": "To avoid performance issues, adjust the mod settings to hide interaction bubbles above speed 1.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["jaxe.rimhud"],
+      "workshop_ids": [1508850027],
+      "notices": [
+        {
+          "type": "info",
+          "message": "To avoid performance issues, increase the refresh interval in the mod settings. The UI is still quite heavy, so close it when you want to run above speed 1.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["taranchuk.fastergameloading"],
+      "workshop_ids": [],
+      "notices": [
+        {
+          "type": "unstable",
+          "message": "Make sure you only enable the first option in the mod settings (more are enabled by default). Even with only that option enabled, this mod is experimental and might have compatibility issues. If your game becomes unresponsive during/after loading, try disabling it.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["owlchemist.simplefx.smoke2", "owlchemist.simplefx.smoke"],
+      "workshop_ids": [],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Heavy rendering code. You should consider disabling it.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["owlchemist.simplefx.splashes"],
+      "workshop_ids": [],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Heavy rendering code. You should consider disabling it.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["matvey24.fpsstabilizer"],
+      "workshop_ids": [3318922522],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Much heavier on TPS than mod page makes it seem like. The trade-off of TPS to FPS is generally not worth it.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["notfood.frameratecontrol"],
+      "workshop_ids": [1591142767],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "FrameRateControl is only worth using on ancient hardware if you struggle using other applications in the background. Usage on any modern system is going to cause far more issues than it is worth.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["atlas.simplefx.vapor.revaporized"],
+      "workshop_ids": [],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Heavy rendering code. You should consider disabling it.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["erdelf.humanoidalienraces", "erdelf.humanoidalienraces.dev"],
+      "workshop_ids": [839005762, 2640710953],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Constant, heavy impact on performance. Recommend disabling. If you desperately want to use a dependent mod, consider getting the Unpatcher: https://github.com/Zeracronius/Unpatcher/releases",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["fed1splay.pawntargetfix"],
+      "workshop_ids": [2014789938],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Complex changes to combat AI have TPS impact scaling with amount of pawns. Consider disabling if you experience low TPS in combat.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["com.yayo.yayoani.continued"],
+      "workshop_ids": [],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Very heavy impact on TPS. You should disable it.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["mlie.yayoscaravan"],
+      "workshop_ids": [],
+      "notices": [
+        {
+          "type": "unstable",
+          "message": "Very unstable. Might break your UI.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["unlimitedhugs.allowtool"],
+      "workshop_ids": [761421485],
+      "notices": [
+        {
+          "type": "alternative",
+          "message": "Consider using 'Keyz Allow Utilities' (Workshop: 3524716849) instead — better performance, same features.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["unlimitedhugs.hugslib"],
+      "workshop_ids": [818773962],
+      "notices": [
+        {
+          "type": "unstable",
+          "message": "Might cause issues. For all intents and purposes this has practically been replaced by Harmony in modern mods. If you can, replace any dependent mods and disable this.",
+          "certainty": "high"
+        },
+        {
+          "type": "alternative",
+          "message": "After removing all HugsLib-dependent mods, install 'Log Publisher from HugsLib' (Workshop: 2873415404) to retain log uploading functionality.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["memegoddess.smartmedicine"],
+      "workshop_ids": [3526251680],
+      "notices": [
+        {
+          "type": "alternative",
+          "message": "Consider using 'Choose Your Medicine' (Workshop: 2937201140) instead — better performance and more featureful.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["nals.facialanimation"],
+      "workshop_ids": [1635901197],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Heavy on TPS. Consider disabling if you run into issues.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["co.uk.epicguru.meleeanimation"],
+      "workshop_ids": [2944488802],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Heavy on TPS. It constantly scans the map, even while combat is not ongoing. You can lessen the impact by setting Scan Tick Interval to a value between 10 and 60 in mod settings.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["iworosiak.holsters"],
+      "workshop_ids": [2610120706],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Somewhat heavy on TPS. Consider disabling if you run into issues.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["ninagoblin.alliesarehelpful"],
+      "workshop_ids": [3534920369],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Scales poorly with amount of allies on map. Consider disabling if you run into TPS issues.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["oblitus.animalslogic"],
+      "workshop_ids": [1098354593],
+      "notices": [
+        {
+          "type": "unstable",
+          "message": "Generally considered unstable, especially the AI tweaks.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["vanillaexpanded.vpe.puppeteer"],
+      "workshop_ids": [3033779606],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Heavy on TPS even if content is not in use. Consider disabling if you are not making heavy use of it.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["marvinkosh.ughyougotme"],
+      "workshop_ids": [1542424705],
+      "notices": [
+        {
+          "type": "alternative",
+          "message": "Consider using 'Short Social Fight' (Workshop: 3474244421) instead — Ugh You Got Me is heavy on TPS due to constant checks.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["brrainz.cameraplus"],
+      "workshop_ids": [867467808],
+      "notices": [
+        {
+          "type": "alternative",
+          "message": "Consider using 'SimpleCameraSetting' (Workshop: 3232415388) instead — similar featureset, better performance.",
+          "certainty": "medium"
+        }
+      ]
+    },
+    {
+      "package_ids": ["ceteam.combatextended"],
+      "workshop_ids": [2890901044, 3495749827],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Some impact on TPS, but reasonable considering what it does. Heavier impact during combat.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [3426502333],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Heavy impact on TPS, though author appears to be actively working on improving performance. Consider what it does for you and decide if you have the TPS to spare.",
+          "certainty": "medium"
+        }
+      ]
+    },
+    {
+      "package_ids": ["andreas.performancebooster.dev"],
+      "workshop_ids": [3568990757],
+      "notices": [
+        {
+          "type": "unstable",
+          "message": "Known to be very broken. You should remove it immediately. The mod has been removed from the Steam Workshop by moderators multiple times. In addition to stability issues, it previously modified logging to hide errors from the user.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["arkymn.slowerpawntickrate"],
+      "workshop_ids": [3524116050],
+      "notices": [
+        {
+          "type": "info",
+          "message": "Adjust the mod settings: The multiplier should be at most 6. Higher values might cause broken pawn behavior.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["owlchemist.scatteredflames"],
+      "workshop_ids": [3261108120],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Detrimental to performance since 1.5.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["esvn.pauseothersettlementssimulation"],
+      "workshop_ids": [3526657761],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "This mod has a net-negative impact on performance. It patches Thing.DoTick with its checks, adding overhead to all active entities, thereby negating any potential benefits of not processing other settlements.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["jecrell.jecstools"],
+      "workshop_ids": [3524247750],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Definite impact on performance. This is an ancient modding framework known to be unstable and slow. You should disable it unless you desperately want to use a dependent mod.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["avilmask.commonsense"],
+      "workshop_ids": [1561769193],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "This mod's tweaks to Pawn behavior add up in cost. Look through the settings and decide which options are actually worth a hit to performance.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": ["vanillaexpanded.temperature"],
+      "workshop_ids": [3202046258],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "You should disable Proxy Heat in VTE's settings if you are having issues. It is enabled by default and heavy on performance.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [1201382956],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Very likely to lower TPS. Multiple slow patches including CompAbilityUserMight spiking to 7ms constantly, plus slow gizmos on pawn selection.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [1134165362],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Very likely to lower TPS. Goes absolutely nuts in combat — massive spikes with even small raid sizes.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [2222935097],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Very likely to lower TPS. Obliterates FPS on default settings. WorldObjectsHolder method climbs to 15ms on a fully covered planet.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [2889326293],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Likely to lower TPS. Costly overhead even without any androids on the map, scales with amount of pawns.",
+          "certainty": "medium"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [2270454746],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Very likely to lower TPS. Averaging 45ms overhead. Avoid.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [1221668621, 2912642991],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Landing pad blinking lights cause the entire GlowGrid to recalculate on each blink — 6 to 10ms spikes. Disable that option in settings (enabled by default).",
+          "certainty": "medium"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [724602224],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Likely to lower TPS. Makes vanilla jobs worse.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [1786466855],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Likely to lower TPS. About 2ms of overhead after adding it and Humanoid Alien Races into an ongoing save.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [1257561308],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Likely to lower TPS. Incredibly slow MapComp, scales with people on the map. 20 pawns create frequent spikes of 23-28ms.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [2014132171, 3256505678],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Likely to lower TPS. No ambient overhead, but when turret hunt mode is on it eats 2.5-11ms constant. Increases with more turrets set to hunt.",
+          "certainty": "medium"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [1157085076],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Likely to lower TPS. Impact scales sharply with amount of doors with different access settings.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [1339148170, 3530729319],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Likely to lower TPS. FindRoomFood patch spikes up to 100-110ms every time a pawn decides to eat and seeks out a dining room.",
+          "certainty": "medium"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [2560931731, 3391128917],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Very likely to lower TPS. Map Comp Tick eats 10-15ms or more when pawns are moving.",
+          "certainty": "medium"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [1316188771, 3532342422],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Likely to lower TPS. Scales with number of doors. Constant overhead plus spikes.",
+          "certainty": "high"
+        },
+        {
+          "type": "alternative",
+          "message": "Consider using '[LTS] Furnishing' (Workshop: 2567438519) instead — has multitile doors without the performance impact.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [826998327],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Very likely to impact TPS. About 2ms constant when open. Do not keep it open.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [1855885448],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Likely to impact TPS. Mild constant impact, but selecting a pawn produces 30-33ms spikes. Makes commanding pawns during combat difficult.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [2287142613],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Likely to impact TPS. Constant scanning when any limits are set. Removing limits removes the overhead.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [1687566130, 3530806680],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Likely to impact TPS. Scales with the amount of pawns and maintenance bills counting colonists.",
+          "certainty": "high"
+        }
+      ]
+    },
+    {
+      "package_ids": [],
+      "workshop_ids": [2879166831],
+      "notices": [
+        {
+          "type": "performance",
+          "message": "Very likely to impact TPS. Applies PollutionPump comp to all trees, turning every map with dense flora into a slideshow. Impact varies by biome and map size.",
+          "certainty": "high"
+        }
+      ]
+    }
+  ]
+}
