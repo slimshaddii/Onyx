@@ -21,6 +21,11 @@ class Instance:
     icon_key: str = ''
     group: str = ''
     total_playtime_minutes: int = 0
+    mods_configured: bool = False
+    ignored_deps: list[str] = field(default_factory=list)
+    # Format: ["mod_id:dep_id", ...]
+    # e.g. "mlie.phaseweaponry:brrainz.harmony" means
+    # "for this instance, ignore Harmony dep warning on Phase Weaponry"
 
     @classmethod
     def load(cls, path: Path) -> Optional['Instance']:
@@ -43,6 +48,8 @@ class Instance:
                 icon_key=d.get('icon_key', ''),
                 group=d.get('group', ''),
                 total_playtime_minutes=d.get('total_playtime_minutes', 0),
+                mods_configured=d.get('mods_configured', False),
+                ignored_deps=d.get('ignored_deps', []),
             )
         except (json.JSONDecodeError, KeyError, OSError):
             return None
@@ -62,6 +69,8 @@ class Instance:
             'icon_key': self.icon_key,
             'group': self.group,
             'total_playtime_minutes': self.total_playtime_minutes,
+            'mods_configured': self.mods_configured,
+            'ignored_deps': self.ignored_deps,
         }
         tmp = self.path / 'instance.json.tmp'
         try:
@@ -70,9 +79,11 @@ class Instance:
             tmp.replace(self.path / 'instance.json')
         except Exception as e:
             tmp.unlink(missing_ok=True)
-            raise RuntimeError(f"Failed to save instance '{self.name}': {e}") from e
+            raise RuntimeError(
+                f"Failed to save instance '{self.name}': {e}") from e
 
-    def duplicate(self, new_name: str, new_path: Optional[Path] = None) -> 'Instance':
+    def duplicate(self, new_name: str,
+                  new_path: Optional[Path] = None) -> 'Instance':
         target = new_path or self.path.parent / new_name
         shutil.copytree(str(self.path), str(target))
         inst = Instance.load(target)
@@ -83,7 +94,8 @@ class Instance:
             inst.total_playtime_minutes = 0
             inst.save()
             return inst
-        raise RuntimeError(f"Failed to load duplicated instance at {target}")
+        raise RuntimeError(
+            f"Failed to load duplicated instance at {target}")
 
     def activate_mod(self, mod_id: str):
         if mod_id in self.inactive_mods:
@@ -141,8 +153,10 @@ class Instance:
             for rws in sd.glob('*.rws'):
                 st = rws.stat()
                 saves.append({
-                    'name': rws.stem, 'path': str(rws),
+                    'name': rws.stem,
+                    'path': str(rws),
                     'size': st.st_size,
-                    'modified': datetime.fromtimestamp(st.st_mtime).isoformat()
+                    'modified': datetime.fromtimestamp(
+                        st.st_mtime).isoformat(),
                 })
         return sorted(saves, key=lambda s: s['modified'], reverse=True)

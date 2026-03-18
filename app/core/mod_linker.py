@@ -9,8 +9,6 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-# DLC package IDs — these are loaded from Game/Data/ automatically.
-# NEVER link these into Game/Mods/ or RimWorld will see duplicates.
 _DLC_PACKAGE_IDS = {
     'ludeon.rimworld',
     'ludeon.rimworld.royalty',
@@ -20,14 +18,12 @@ _DLC_PACKAGE_IDS = {
     'ludeon.rimworld.odyssey',
 }
 
-# DLC folder names in Game/Data/ — also skip these by folder name
 _DLC_FOLDER_NAMES = {
     'core', 'royalty', 'ideology', 'biotech', 'anomaly', 'odyssey',
 }
 
 
 def _is_dlc(mod_id: str, folder_name: str = '') -> bool:
-    """Check if a mod is a DLC that RimWorld loads from Data/ automatically."""
     if mod_id.lower() in _DLC_PACKAGE_IDS:
         return True
     if folder_name.lower() in _DLC_FOLDER_NAMES:
@@ -39,67 +35,52 @@ def sync_instance_mods(active_mod_ids: list[str],
                        all_mods: dict,
                        game_mods_dir: Path,
                        onyx_mods_dir: Optional[Path] = None) -> dict:
-    """
-    Sync game Mods folder to match this instance's active mods.
-    Removes Onyx-managed links not in active list, adds missing ones.
-    Never touches DLC mods (they load from Game/Data/).
-    """
-    results = {'linked': 0, 'unlinked': 0, 'skipped': 0, 'failed': 0, 'errors': []}
+    results = {'linked': 0, 'unlinked': 0, 'skipped': 0,
+               'failed': 0, 'errors': []}
     game_mods_dir.mkdir(parents=True, exist_ok=True)
 
     needed_folders = {}
     for mid in active_mod_ids:
-        # Skip DLCs — they're in Game/Data/
         if _is_dlc(mid):
             continue
         info = all_mods.get(mid)
         if info and info.path and info.path.exists():
-            # Also skip if the folder name matches a DLC
             if _is_dlc(mid, info.path.name):
                 continue
-            # Skip mods whose source path is inside Game/Data/
             try:
                 path_str = str(info.path.resolve()).lower()
-                if 'data' + os.sep in path_str and ('rimworld' in path_str or 'game' in path_str):
-                    # This mod lives in Game/Data/ — don't link
+                if ('data' + os.sep in path_str and
+                        ('rimworld' in path_str or 'game' in path_str)):
                     continue
             except Exception:
                 pass
             needed_folders[info.path.name] = mid
 
-    print(f"[Sync] Active mods need {len(needed_folders)} folders linked (DLCs excluded)")
-
-    onyx_managed = set()
+    onyx_managed: set[str] = set()
     if onyx_mods_dir and onyx_mods_dir.exists():
-        onyx_managed = {d.name for d in onyx_mods_dir.iterdir() if d.is_dir()}
+        onyx_managed = {d.name for d in onyx_mods_dir.iterdir()
+                        if d.is_dir()}
 
-    print(f"[Sync] Found {len(onyx_managed)} Onyx-managed mods")
-
-    # Remove links that shouldn't be there (only Onyx-managed, never DLCs)
+    # Remove links that shouldn't be there
     for item in game_mods_dir.iterdir():
         if not item.is_dir():
             continue
-        # Never touch DLC folders
         if item.name.lower() in _DLC_FOLDER_NAMES:
             continue
-        if item.name in onyx_managed:
-            if item.name not in needed_folders:
-                print(f"[Sync] Removing unneeded mod: {item.name}")
-                if _force_remove(item):
-                    results['unlinked'] += 1
-                else:
-                    results['errors'].append(f"Failed to remove {item.name}")
+        if item.name in onyx_managed and item.name not in needed_folders:
+            if _force_remove(item):
+                results['unlinked'] += 1
+            else:
+                results['errors'].append(f"Failed to remove {item.name}")
 
     # Add needed links
     if onyx_mods_dir:
         for folder_name, mod_id in needed_folders.items():
-            # Double-check: don't link DLC folder names
             if folder_name.lower() in _DLC_FOLDER_NAMES:
                 continue
 
             src = onyx_mods_dir / folder_name
             if not src.exists():
-                print(f"[Sync] Source missing for {mod_id}: {src}")
                 results['errors'].append(f"Source missing: {folder_name}")
                 continue
 
@@ -110,26 +91,20 @@ def sync_instance_mods(active_mod_ids: list[str],
                     results['skipped'] += 1
                     continue
                 else:
-                    print(f"[Sync] Removing broken link: {folder_name}")
                     _force_remove(dst)
 
-            print(f"[Sync] Linking {folder_name}")
             ok, method = _create_link(src, dst)
             if ok:
                 results['linked'] += 1
-                print(f"[Sync] ✓ Linked {folder_name} ({method})")
             else:
                 results['failed'] += 1
                 results['errors'].append(f"{folder_name}: {method}")
-                print(f"[Sync] ✗ Failed {folder_name}: {method}")
-
-    print(f"[Sync] Complete: linked={results['linked']}, unlinked={results['unlinked']}, "
-          f"skipped={results['skipped']}, failed={results['failed']}")
 
     return results
 
 
-def clear_all_managed_mods(game_mods_dir: Path, onyx_mods_dir: Path) -> dict:
+def clear_all_managed_mods(game_mods_dir: Path,
+                            onyx_mods_dir: Path) -> dict:
     results = {'removed': 0, 'failed': 0, 'errors': []}
     if not onyx_mods_dir.exists():
         return results
@@ -147,7 +122,6 @@ def clear_all_managed_mods(game_mods_dir: Path, onyx_mods_dir: Path) -> dict:
 
 
 def sync_all_mods(onyx_mods_dir: Path, game_mods_dir: Path) -> dict:
-    """Link ALL downloaded mods into game folder (skipping DLCs)."""
     results = {'linked': 0, 'skipped': 0, 'failed': 0, 'errors': []}
     if not onyx_mods_dir.exists():
         return results
@@ -170,7 +144,8 @@ def sync_all_mods(onyx_mods_dir: Path, game_mods_dir: Path) -> dict:
     return results
 
 
-def link_mod_to_game(mod_source: Path, game_mods_dir: Path) -> tuple[bool, str]:
+def link_mod_to_game(mod_source: Path,
+                     game_mods_dir: Path) -> tuple[bool, str]:
     if not mod_source.exists():
         return False, "source_missing"
     if mod_source.name.lower() in _DLC_FOLDER_NAMES:
@@ -195,8 +170,7 @@ def delete_downloaded_mod(mod_folder: Path, game_mods_dir: Path) -> bool:
         try:
             shutil.rmtree(str(mod_folder))
             return True
-        except Exception as e:
-            print(f"[ModLink] Delete failed: {e}")
+        except Exception:
             return False
     return True
 
@@ -220,7 +194,7 @@ def verify_game_mods(onyx_mods_dir: Path, game_mods_dir: Path) -> dict:
     return status
 
 
-# ── Low-level helpers (unchanged) ────────────────────────────────
+# ── Low-level helpers ─────────────────────────────────────────────────────────
 
 def _path_exists_any(path: Path) -> bool:
     if path.exists():
@@ -246,7 +220,8 @@ def _is_valid_link(link_path: Path, expected_target: Path) -> bool:
     try:
         if link_path.is_symlink():
             target = link_path.readlink()
-            return target == expected_target or target.resolve() == expected_target.resolve()
+            return (target == expected_target or
+                    target.resolve() == expected_target.resolve())
         if os.name == 'nt' and _is_junction(link_path):
             return link_path.is_dir()
         return _is_valid_mod(link_path)
@@ -266,18 +241,15 @@ def _create_link(source: Path, target: Path) -> tuple[bool, str]:
                 capture_output=True, text=True, timeout=10, check=False)
             if _path_exists_any(target) and _is_valid_mod(target):
                 return True, "junction"
-            err = (r.stderr or r.stdout).strip()
-            if err:
-                print(f"[Link] Junction failed {source.name}: {err}")
-        except Exception as e:
-            print(f"[Link] Junction error {source.name}: {e}")
+        except Exception:
+            pass
 
     try:
         target.symlink_to(source, target_is_directory=True)
         if _path_exists_any(target) and _is_valid_mod(target):
             return True, "symlink"
-    except OSError as e:
-        print(f"[Link] Symlink failed {source.name}: {e}")
+    except OSError:
+        pass
 
     try:
         if _path_exists_any(target):
@@ -289,7 +261,6 @@ def _create_link(source: Path, target: Path) -> tuple[bool, str]:
     except FileExistsError:
         return _path_exists_any(target), "already_exists"
     except Exception as e:
-        print(f"[Link] Copy failed {source.name}: {e}")
         return False, f"copy_failed:{e}"
 
 
@@ -326,8 +297,8 @@ def _force_remove(target: Path) -> bool:
                     ['cmd', '/c', 'rmdir', '/s', '/q', str(target)],
                     capture_output=True, timeout=10, check=False)
                 return not _path_exists_any(target)
-    except Exception as e:
-        print(f"[Link] Remove failed {target.name}: {e}")
+    except Exception:
+        pass
 
     return not _path_exists_any(target)
 

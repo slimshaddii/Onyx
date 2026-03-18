@@ -1,28 +1,35 @@
-"""Library browser — add mods from global pool to an instance."""
+"""Library browser — add, delete, or redownload mods from the global pool."""
 
+import shutil
+from pathlib import Path
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QListWidget, QListWidgetItem, QAbstractItemView,
+    QMenu, QMessageBox,
 )
 from PyQt6.QtCore import Qt
 
-from app.core.rimworld import ModInfo
+from app.core.rimworld import RimWorldDetector, ModInfo
 from app.core.modlist import VANILLA_AND_DLCS
+from app.core.paths import settings_path
+from app.utils.file_utils import load_json
 
 
 class LibraryDialog(QDialog):
     """Browse all installed mods and pick ones to add to an instance."""
 
     def __init__(self, parent, all_mods: dict[str, ModInfo],
-                 instance_mod_ids: set[str], game_version: str = ''):
+                 instance_mod_ids: set[str], game_version: str = '',
+                 rw: RimWorldDetector | None = None):
         super().__init__(parent)
         self.all_mods         = all_mods
         self.instance_mod_ids = instance_mod_ids
         self.game_version     = game_version
+        self.rw               = rw
         self.selected_ids: list[str] = []
 
         self.setWindowTitle("Mod Library — Add to Instance")
-        self.setMinimumSize(520, 480)
+        self.setMinimumSize(560, 520)
         self._build()
         self._load()
 
@@ -35,7 +42,8 @@ class LibraryDialog(QDialog):
 
         hint = QLabel(
             "These mods are installed on your system but not yet part of "
-            "this instance. Select mods and click 'Add to Instance'.")
+            "this instance. Select mods and click 'Add to Instance'.\n"
+            "Right-click a mod to delete or redownload it.")
         hint.setWordWrap(True)
         hint.setStyleSheet("color:#888;font-size:11px;")
         lo.addWidget(hint)
@@ -48,6 +56,9 @@ class LibraryDialog(QDialog):
         self.mod_list = QListWidget()
         self.mod_list.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.mod_list.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
+        self.mod_list.customContextMenuRequested.connect(self._ctx_menu)
         lo.addWidget(self.mod_list, 1)
 
         self.count_label = QLabel("")
@@ -113,3 +124,136 @@ class LibraryDialog(QDialog):
         ]
         if self.selected_ids:
             self.accept()
+
+    # ── Context menu ──────────────────────────────────────────────────────────
+
+    def _ctx_menu(self, pos):
+        it = self.mod_list.itemAt(pos)
+        if not it:
+            return
+        mid  = it.data(Qt.ItemDataRole.UserRole)
+        info = self.all_mods.get(mid)
+        if not info:
+            return
+
+        m = QMenu(self)
+        m.addAction("Add to Instance", self._add)
+
+        # Delete — available for any mod with a real path on disk
+        if info.path and info.path.exists():
+            m.addSeparator()
+            m.addAction("🗑 Delete mod files…",
+                        lambda: self._delete_mod(mid))
+
+        # Redownload — only if the mod has a workshop ID
+        if info.workshop_id:
+            m.addAction("⟳ Redownload from Workshop",
+                        lambda: self._redownload_mod(mid))
+            m.addSeparator()
+            from app.core.steam_integration import open_workshop_page
+            m.addAction("Workshop page",
+                        lambda: open_workshop_page(info.workshop_id))
+
+        m.exec(self.mod_list.mapToGlobal(pos))
+
+    # ── Delete ────────────────────────────────────────────────────────────────
+
+    def _delete_mod(self, mid: str):
+        info = self.all_mods.get(mid)
+        if not info or not info.path or not info.path.exists():
+            QMessageBox.warning(self, "Delete", "Mod folder not found.")
+            return
+
+        reply = QMessageBox.question(
+            self, "Delete Mod Files",
+            f"Permanently delete '{info.name}'?\n\n"
+            f"  {info.path}\n\n"
+            f"This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            shutil.rmtree(str(info.path))
+            print(f"[Library] Deleted mod folder: {info.path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Delete Failed", str(e))
+            return
+
+        # Remove from list
+        for i in range(self.mod_list.count()):
+            if (self.mod_list.item(i) and
+                    self.mod_list.item(i).data(Qt.ItemDataRole.UserRole) == mid):
+                self.mod_list.takeItem(i)
+                break
+
+        # Remove from all_mods snapshot and rescan if rw available
+        self.all_mods.pop(mid, None)
+        if self.rw:
+            self.all_mods = self.rw.get_installed_mods(force_rescan=True)
+
+        # Update count
+        visible = sum(
+            1 for i in range(self.mod_list.count())
+            if not self.mod_list.item(i).isHidden())
+        self.count_label.setText(f"{visible} mods available in library")
+
+        QMessageBox.information(
+            self, "Deleted", f"'{info.name}' was deleted.")
+
+    # ── Redownload ────────────────────────────────────────────────────────────
+
+    def _redownload_mod(self, mid: str):
+        info = self.all_mods.get(mid)
+        if not info or not info.workshop_id:
+            QMessageBox.warning(
+                self, "Redownload",
+                "This mod has no Workshop ID — cannot redownload.")
+            return
+
+        s             = load_json(settings_path(), {})
+        steamcmd_path = s.get('steamcmd_path', '')
+        data_root     = s.get('data_root', '')
+
+        if not steamcmd_path or not Path(steamcmd_path).exists():
+            QMessageBox.warning(
+                self, "SteamCMD Not Configured",
+                "Set the SteamCMD path in Settings to redownload mods.")
+            return
+        if not data_root:
+            QMessageBox.warning(self, "Error", "Data root not configured.")
+            return
+
+        from app.core.steamcmd import DownloadQueue
+        from app.ui.modeditor.download_dialog import DownloadProgressDialog
+
+        queue = DownloadQueue(
+            steamcmd_path=steamcmd_path,
+            destination=str(Path(data_root) / 'mods'),
+            max_concurrent=1,
+            username=s.get('steamcmd_username', ''))
+
+        dlg = DownloadProgressDialog(
+            self, queue, [(info.workshop_id, info.name)])
+        dlg.setWindowTitle(f"Redownloading — {info.name}")
+        dlg.downloads_complete.connect(
+            lambda results: self._on_redownload_done(results, info.name))
+        dlg.exec()
+
+    def _on_redownload_done(self, results: list, mod_name: str):
+        ok  = sum(1 for _, s, _ in results if s)
+        if ok:
+            QMessageBox.information(
+                self, "Redownload Complete",
+                f"'{mod_name}' was redownloaded successfully.")
+            # Rescan so the list reflects any changes
+            if self.rw:
+                self.all_mods = self.rw.get_installed_mods(force_rescan=True)
+                self._load()
+        else:
+            msg = results[0][2] if results else "Unknown error"
+            QMessageBox.warning(
+                self, "Redownload Failed",
+                f"Failed to redownload '{mod_name}':\n{msg}")

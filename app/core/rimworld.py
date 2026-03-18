@@ -220,7 +220,6 @@ class RimWorldDetector:
                         found += 1
             except PermissionError:
                 pass
-            print(f"[ModScan] {dirpath} -> {found} mods (source={source})")
 
         if self.game_path:
             scan(self.game_path / 'Data', 'dlc')
@@ -236,7 +235,6 @@ class RimWorldDetector:
                 scan(p, source)
 
         self._mods_cache = mods
-        print(f"[ModScan] TOTAL: {len(mods)} mods from {len(scanned)} directories")
         return mods
 
     def get_detected_dlcs(self) -> list[str]:

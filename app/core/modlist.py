@@ -69,7 +69,6 @@ def write_mods_config(config_path: Path, mod_ids: list[str],
                 insert_pos = i
                 break
         ordered_mods.insert(insert_pos, 'ludeon.rimworld')
-        print("[ModsConfig] WARNING: Core was missing, inserted at position", insert_pos)
 
     def _esc(s: str) -> str:
         return (s.replace('&', '&amp;')
@@ -105,7 +104,6 @@ def write_mods_config(config_path: Path, mod_ids: list[str],
 
     xml_path = config_path / 'ModsConfig.xml'
     xml_path.write_text('\n'.join(lines), encoding='utf-8')
-    print(f"[ModsConfig] Wrote {len(ordered_mods)} mods to {xml_path}")
     return xml_path
 
 

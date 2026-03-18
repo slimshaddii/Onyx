@@ -96,11 +96,6 @@ def auto_sort_mods(mod_ids: list[str], rw: RimWorldDetector) -> list[str]:
     result = s0 + s1a + s1b + s1c + s2 + s3
 
     violations = _count_violations(result, installed)
-    print(f"[Sort] {len(result)} mods — "
-          f"t0={len(s0)} core={len(s1a)} t1b={len(s1b)} "
-          f"dlcs={len(s1c)} t2={len(s2)} t3={len(s3)}")
-    if violations:
-        print(f"[Sort] {violations} violation(s) remain (likely circular deps)")
 
     return result
 

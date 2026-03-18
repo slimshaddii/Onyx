@@ -157,6 +157,7 @@ class ItemBuilder:
         order      = self.active.get_ids()
         active_ids = set(order)
         _pos       = {m: i for i, m in enumerate(order)}
+        ignored_deps = set(self.inst.ignored_deps)
 
         for i in range(self.active.count()):
             it  = self.active.item(i)
@@ -167,7 +168,8 @@ class ItemBuilder:
             name   = self.names.get(mid, mid)
             is_new = mid not in self._original_mods
             badges = get_badges(mid, self.all_mods, active_ids,
-                                self._game_version(), order, _pos)
+                                self._game_version(), order, _pos,
+                                ignored_deps=ignored_deps)
 
             # ── Label ────────────────────────────────────────────────────────
             prefix = ''.join(b[0] for b in badges)
