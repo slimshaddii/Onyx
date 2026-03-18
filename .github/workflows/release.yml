@@ -1,0 +1,193 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller toposort
+          pip install PyQt6 PyQt6-Qt6 PyQt6-sip
+          pip install PyQt6-WebEngine PyQt6-WebEngine-Qt6
+          pip install Pillow
+
+      - name: Build
+        run: python build.py --clean
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: dist/OnyxLauncher-Beta-windows.zip
+          retention-days: 1
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install system Qt and WebEngine dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libgl1 \
+            libglib2.0-0 \
+            libxcb1 \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libxcb-xinerama0 \
+            libxcb-xkb1 \
+            libxkbcommon-x11-0 \
+            libxkbcommon0 \
+            libdbus-1-3 \
+            libegl1 \
+            libfontconfig1 \
+            libfreetype6 \
+            libx11-6 \
+            libx11-xcb1 \
+            libxi6 \
+            libxrender1 \
+            libxtst6 \
+            libpulse0 \
+            libasound2-dev \
+            libxcomposite1 \
+            libxcursor1 \
+            libxdamage1 \
+            libxfixes3 \
+            libxrandr2 \
+            libxss1 \
+            x11-utils \
+            xvfb \
+            libnspr4 \
+            libnss3 \
+            libnss3-tools \
+            libatk1.0-0 \
+            libatk-bridge2.0-0 \
+            libcups2 \
+            libdrm2 \
+            libgbm1 \
+            libasound2 \
+            libpangocairo-1.0-0 \
+            libpango-1.0-0 \
+            libcairo2 \
+            libatspi2.0-0 \
+            libgtk-3-0 \
+            libgdk-pixbuf2.0-0
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller toposort
+          pip install PyQt6 PyQt6-Qt6 PyQt6-sip
+          pip install PyQt6-WebEngine PyQt6-WebEngine-Qt6
+          pip install Pillow
+
+      - name: Build (with virtual display)
+        run: |
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1024x768x24 &
+          sleep 2
+          python build.py --clean
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: dist/OnyxLauncher-Beta-linux.zip
+          retention-days: 1
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller toposort
+          pip install PyQt6 PyQt6-Qt6 PyQt6-sip
+          pip install PyQt6-WebEngine PyQt6-WebEngine-Qt6
+          pip install Pillow
+
+      - name: Build
+        run: python build.py --clean
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-build
+          path: dist/OnyxLauncher-Beta-macos.zip
+          retention-days: 1
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [build-windows, build-linux, build-macos]
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Onyx Launcher ${{ github.ref_name }}"
+          body: |
+            ## Onyx Launcher ${{ github.ref_name }}
+
+            ### Downloads
+            | Platform | File |
+            |---|---|
+            | Windows | `OnyxLauncher-Beta-windows.zip` |
+            | Linux | `OnyxLauncher-Beta-linux.zip` |
+            | macOS | `OnyxLauncher-Beta-macos.zip` |
+
+            ### Installation
+            1. Download the zip for your platform
+            2. Extract anywhere
+            3. Run `OnyxLauncher.exe` (Windows) or `OnyxLauncher` (Linux/Mac)
+
+            ### Notes
+            - First launch may take a few seconds while Qt initializes
+            - Linux users may need to `chmod +x OnyxLauncher` before running
+          files: |
+            artifacts/windows-build/OnyxLauncher-Beta-windows.zip
+            artifacts/linux-build/OnyxLauncher-Beta-linux.zip
+            artifacts/macos-build/OnyxLauncher-Beta-macos.zip
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
