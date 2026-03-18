@@ -95,7 +95,7 @@ jobs:
             libcups2 \
             libdrm2 \
             libgbm1 \
-            libasound2 \
+            libasound2t64 \
             libpangocairo-1.0-0 \
             libpango-1.0-0 \
             libcairo2 \

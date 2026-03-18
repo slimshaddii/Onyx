@@ -1,8 +1,5 @@
-data/app_settings.json
-
-
 dist/
 build/
 
-
+app_settings.json
 structure.txt

@@ -50,7 +50,10 @@ def main():
 
     app = QApplication(sys.argv)
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    if getattr(sys, 'frozen', False):
+        base_dir = sys._MEIPASS
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
     icon_path = os.path.join(base_dir, 'app', 'ui', 'resources', 'onyx_icon.png')
     app.setWindowIcon(QIcon(icon_path))
     app.setApplicationName("Onyx Launcher")

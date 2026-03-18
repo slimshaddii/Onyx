@@ -11,8 +11,9 @@ a = Analysis(
     binaries=[],
     datas=[
         # App resources
-        ('app/ui/resources/onyx_icon.png', 'app/ui/resources'),
-        ('app/ui/resources/onyx_icon.ico', 'app/ui/resources'),
+        ('app/ui/resources/onyx_icon.png',  'app/ui/resources'),
+        ('app/ui/resources/onyx_icon.ico',  'app/ui/resources'),
+        ('app/ui/resources/onyx_icon.icns', 'app/ui/resources'),
         # Data files
         ('data/known_conflicts.json', 'data'),
         # Include app_settings.json only if it exists
