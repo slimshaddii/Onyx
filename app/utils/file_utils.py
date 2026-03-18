@@ -30,8 +30,8 @@ def get_folder_size(path: Path) -> int:
     return total
 
 
-def human_size(num_bytes: int) -> str:
-    for unit in ['B', 'KB', 'MB', 'GB']:
+def human_size(num_bytes: float) -> str:
+    for unit in ('B', 'KB', 'MB', 'GB'):
         if abs(num_bytes) < 1024.0:
             return f"{num_bytes:.1f} {unit}"
         num_bytes /= 1024.0
@@ -39,13 +39,25 @@ def human_size(num_bytes: int) -> str:
 
 
 def backup_folder(src: Path, backup_root: Path, max_backups: int = 3):
+    """
+    Copy *src* into *backup_root* with a timestamped name.
+    Keeps only the *max_backups* most-recent backup_* directories;
+    non-backup entries in backup_root are never touched.
+    """
     ensure_dir(backup_root)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_path = backup_root / f"backup_{timestamp}"
-    if src.exists():
-        shutil.copytree(str(src), str(backup_path))
+    if not src.exists():
+        return
 
-    backups = sorted(backup_root.iterdir(), key=lambda p: p.name)
+    timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = backup_root / f"backup_{timestamp}"
+    shutil.copytree(str(src), str(backup_path))
+
+    # Only consider directories whose names start with 'backup_'
+    backups = sorted(
+        [p for p in backup_root.iterdir()
+         if p.is_dir() and p.name.startswith('backup_')],
+        key=lambda p: p.name,
+    )
     while len(backups) > max_backups:
         shutil.rmtree(str(backups.pop(0)))
 

@@ -213,8 +213,9 @@ class MainWindow(QMainWindow):
         self.detail.set_instance(inst, self.rw)
 
     def _on_new(self):
-        from app.ui.instance_detail import NewInstanceDialog
-        if NewInstanceDialog(self, self.rw, self.im).exec():
+        from app.ui.instance_new_dialog import NewInstanceDialog
+        if NewInstanceDialog(self, self.rw, self.im,
+                             dl_queue=self.dl_queue).exec():
             self.refresh()
 
     def _on_launch(self, inst):
@@ -296,7 +297,8 @@ class MainWindow(QMainWindow):
         from app.ui.onyxpack_dialog import OnyxImportDialog
         # Rescan before import so we know which mods are already installed
         self._rescan_mods()
-        dlg = OnyxImportDialog(self, Path(path), self.rw, self.im)
+        dlg = OnyxImportDialog(self, Path(path), self.rw, self.im,
+                                dl_queue=self.dl_queue)
         if dlg.exec():
             self.refresh()
 

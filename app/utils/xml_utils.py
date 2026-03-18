@@ -4,10 +4,16 @@ from typing import Optional
 
 
 def parse_xml_safe(filepath: Path) -> Optional[ET.Element]:
+    """
+    Parse an XML file, returning None on any parse or I/O error.
+    Catches UnicodeDecodeError so a single bad mod About.xml
+    cannot crash the entire mod scan.
+    """
     try:
         tree = ET.parse(str(filepath))
         return tree.getroot()
-    except (ET.ParseError, FileNotFoundError, PermissionError):
+    except (ET.ParseError, FileNotFoundError,
+            PermissionError, UnicodeDecodeError, OSError):
         return None
 
 
