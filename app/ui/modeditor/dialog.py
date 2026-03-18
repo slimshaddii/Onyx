@@ -198,6 +198,7 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
         b.addWidget(self._btn("Fix Issues", self._fix,         "primaryButton"))
         b.addWidget(self._btn("History",    self._open_history))
         b.addWidget(self._btn("Conflicts",  self._open_conflicts))
+        b.addWidget(self._btn("Scan Defs",  self._open_def_scan))
         b.addWidget(self._btn("Vanilla",    self._vanilla,     "dangerButton"))
         b.addWidget(self._btn("Import",     self._import_file))
         b.addWidget(self._btn("Export",     self._export))
@@ -384,6 +385,34 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
             active_ids=self.active.get_ids(),
             all_mods=self.all_mods,
             mod_names=self.names)
+        dlg.exec()
+
+    # ── Def Scanner ────────────────────────────────────────────────────────────
+
+    def _open_def_scan(self):
+        from app.ui.modeditor.def_scan_dialog import DefScanDialog
+        from PyQt6.QtWidgets import QMessageBox
+
+        active_ids = self.active.get_ids()
+        if not active_ids:
+            QMessageBox.information(
+                self, "Scan Defs", "No active mods to scan.")
+            return
+
+        # Build active-only subset of all_mods for the scanner
+        active_mods = {
+            mid: self.all_mods[mid]
+            for mid in active_ids
+            if mid in self.all_mods
+        }
+
+        game_version = self.inst.rimworld_version or '1.6'
+        # Extract major.minor (e.g. '1.6' from '1.6.4630 rev467')
+        parts = game_version.split('.')
+        if len(parts) >= 2:
+            game_version = f"{parts[0]}.{parts[1]}"
+
+        dlg = DefScanDialog(self, active_mods, game_version)
         dlg.exec()   
 
     # ── Helpers ───────────────────────────────────────────────────────────────
