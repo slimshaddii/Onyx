@@ -9,9 +9,7 @@ from app.core.dep_resolver import (
 from app.core.steamcmd import DownloadQueue
 from app.core.paths import settings_path
 from app.utils.file_utils import load_json
-from app.ui.modeditor.issue_checker import (
-    get_issue_mod_ids, check_load_order,
-)
+from app.ui.modeditor.issue_checker import check_load_order
 
 
 class ModFixes:
@@ -22,7 +20,8 @@ class ModFixes:
               self._ignored_deps_set(), self._avail_ids(),
               self._mk_active(), self._refresh_badges(),
               self._refresh_inner(), self._update(),
-              self._filter_issues, self.active.filter_by_ids()
+              self._filter_on, self._apply_filter(),
+              self.active.filter_by_ids()
     """
 
     def _fix(self):
@@ -134,10 +133,12 @@ class ModFixes:
 
     def _show_fix_report(self, issues: list, activated: int,
                          dl_results: list):
-        order       = self.active.get_ids()
+        order    = self.active.get_ids()
+        _pos     = {m: i for i, m in enumerate(order)}   # build once
+
         order_count = sum(
             len(check_load_order(mid, self.all_mods.get(mid),
-                                 order, self.all_mods))
+                                 order, self.all_mods, _pos))
             for mid in order if self.all_mods.get(mid))
 
         unfixable    = [i for i in issues
@@ -202,8 +203,5 @@ class ModFixes:
         mods = self.active.get_ids()
         self.active.clear()
         self._batch_load_active(mods)
-        if self._filter_issues:
-            ids = get_issue_mod_ids(
-                self.active.get_ids(), self.all_mods,
-                self.inst.rimworld_version or '')
-            self.active.filter_by_ids(ids)
+        if self._filter_on:
+            self._apply_filter()

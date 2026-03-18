@@ -18,7 +18,7 @@ from app.ui.modeditor.preview_panel import PreviewPanel
 from app.ui.modeditor.item_builder import ItemBuilder
 from app.ui.modeditor.issue_checker import (
     get_badges, count_issues, get_issue_mod_ids,
-    format_issue_text, format_issue_color,
+    format_issue_color,
 )
 from app.ui.modeditor.mod_actions import ModActions
 from app.ui.modeditor.mod_fixes   import ModFixes
@@ -43,8 +43,10 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
         self.names    = {pid: info.name
                          for pid, info in self.all_mods.items()}
 
-        self._filter_issues = False
+        self._filter_on   = False
+        self._filter_cats: set[str] = {'error', 'dep', 'warning', 'order'}
         self._defer_updates = False
+        self._chip_btns: dict[str, QPushButton] = {}
         self._known_mod_ids = self._load_known_mod_ids()
         self._original_mods: set[str] = set(instance.mods)
 
@@ -83,23 +85,20 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
         lo.setContentsMargins(6, 4, 6, 6)
         lo.setSpacing(4)
 
+        # ── Header row ────────────────────────────────────────────────────────
         hdr = QHBoxLayout()
         hdr.addWidget(QLabel(f"<b>{self.inst.name}</b>"))
-        self.cnt = QLabel("0")
+        self.cnt = QLabel("0 active · 0 inactive")
         self.cnt.setStyleSheet(
-            "color:#7c8aff;font-weight:bold;font-size:11px;")
+            "color:#74d4cc;font-weight:bold;font-size:11px;")
         hdr.addWidget(self.cnt)
-        self.issue_btn = QPushButton("✔ OK")
-        self.issue_btn.setFlat(True)
-        self.issue_btn.setStyleSheet(
-            "font-size:11px;padding:0 6px;border:none;color:#4CAF50;")
-        self.issue_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.issue_btn.setToolTip("Click to show only mods with issues")
-        self.issue_btn.clicked.connect(self._toggle_filter)
-        hdr.addWidget(self.issue_btn)
         hdr.addStretch()
         lo.addLayout(hdr)
 
+        # ── Filter chips row ──────────────────────────────────────────────────
+        lo.addLayout(self._build_filter_row())
+
+        # ── Three-panel splitter ──────────────────────────────────────────────
         sp = QSplitter(Qt.Orientation.Horizontal)
         sp.addWidget(self._build_avail_panel())
         sp.addWidget(self._build_active_panel())
@@ -109,6 +108,146 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
         lo.addWidget(sp, 1)
 
         lo.addLayout(self._build_bottom_bar())
+
+    def _build_filter_row(self) -> QHBoxLayout:
+        """
+        Build the filter chips row.
+
+        Layout:
+            [Filter ▼]  [❌ 0]  [📦 0]  [⚠ 0]  [🔃 0]  [🐢 0]  [ℹ 0]
+        """
+        from app.ui.modeditor.issue_checker import SEVERITY_CONFIG
+
+        row = QHBoxLayout()
+        row.setSpacing(4)
+
+        # Master toggle button
+        self.filter_btn = QPushButton("Filter ▼")
+        self.filter_btn.setCheckable(True)
+        self.filter_btn.setChecked(False)
+        self.filter_btn.setFixedHeight(22)
+        self.filter_btn.setStyleSheet(
+            "font-size:10px; padding:1px 8px; border-radius:3px;")
+        self.filter_btn.setToolTip(
+            "Toggle filter — show only mods matching active categories")
+        self.filter_btn.clicked.connect(self._on_filter_toggle)
+        row.addWidget(self.filter_btn)
+
+        # Category chip buttons
+        # Order: critical severity first, info last
+        _chip_order = [
+            ('error',       '❌', '#ff4444'),
+            ('dep',         '📦', '#ff8800'),
+            ('warning',     '⚠',  '#ff8800'),
+            ('order',       '🔃', '#ffaa00'),
+            ('performance', '🐢', '#ffaa00'),
+            ('info',        'ℹ',  '#888888'),
+        ]
+
+        self._chip_btns: dict[str, QPushButton] = {}
+
+        for cat, icon, color in _chip_order:
+            btn = QPushButton(f"{icon} 0")
+            btn.setCheckable(True)
+            btn.setChecked(cat in self._filter_cats)
+            btn.setFixedHeight(22)
+            btn.setProperty('cat', cat)
+            btn.setProperty('icon', icon)
+            btn.setProperty('color', color)
+            btn.setToolTip(self._chip_tooltip(cat))
+            btn.clicked.connect(
+                lambda checked, c=cat: self._on_chip_toggle(c, checked))
+            self._chip_btns[cat] = btn
+            row.addWidget(btn)
+            self._style_chip(btn, cat in self._filter_cats, 0)
+
+        row.addStretch()
+        return row
+
+    def _chip_tooltip(self, cat: str) -> str:
+        return {
+            'error':       'Critical errors — not on disk, missing deps, incompatible mods',
+            'dep':         'Dependencies — dep exists but not active',
+            'warning':     'Compatibility — version mismatch, unstable, better alternative exists',
+            'order':       'Load order — loadAfter/loadBefore violations',
+            'performance': 'Performance — JuMLi community performance notices',
+            'info':        'Info — settings advice from JuMLi',
+        }.get(cat, cat)
+
+    def _style_chip(self, btn: QPushButton, active: bool, count: int):
+        """Apply visual style to a chip button based on active state and count."""
+        cat   = btn.property('cat')
+        icon  = btn.property('icon')
+        color = btn.property('color')
+
+        btn.setText(f"{icon} {count}")
+
+        if count == 0:
+            # No issues of this type — always dim regardless of active state
+            btn.setStyleSheet(
+                "font-size:10px; padding:1px 6px; border-radius:3px; "
+                "background:#2a2a2a; color:#444444; border:1px solid #333;")
+            btn.setEnabled(False)
+            return
+
+        btn.setEnabled(True)
+
+        if active:
+            # Active chip — colored background
+            btn.setStyleSheet(
+                f"font-size:10px; padding:1px 6px; border-radius:3px; "
+                f"background:{color}; color:#1a1a1a; "
+                f"font-weight:bold; border:1px solid {color};")
+        else:
+            # Inactive chip — dark background, colored border
+            btn.setStyleSheet(
+                f"font-size:10px; padding:1px 6px; border-radius:3px; "
+                f"background:#2a2a2a; color:{color}; "
+                f"border:1px solid {color};")
+            
+    def _on_filter_toggle(self, checked: bool):
+        """Master filter on/off."""
+        self._filter_on = checked
+        self.filter_btn.setText("Filter ▲" if checked else "Filter ▼")
+        self._apply_filter()
+
+    def _on_chip_toggle(self, cat: str, checked: bool):
+        """Toggle one category chip."""
+        if checked:
+            self._filter_cats.add(cat)
+        else:
+            self._filter_cats.discard(cat)
+
+        btn = self._chip_btns.get(cat)
+        if btn:
+            # Get current count from button text
+            try:
+                count = int(btn.text().split()[-1])
+            except (ValueError, IndexError):
+                count = 0
+            self._style_chip(btn, checked, count)
+
+        # Re-apply filter if filter mode is on
+        if self._filter_on:
+            self._apply_filter()
+
+    def _apply_filter(self):
+        """Show/hide items based on current filter state."""
+        if not self._filter_on:
+            self.active.filter_by_ids(None)
+            return
+
+        if not self._filter_cats:
+            # No categories active — show nothing (all filtered out)
+            self.active.filter_by_ids(set())
+            return
+
+        ids = get_issue_mod_ids(
+            self.active.get_ids(), self.all_mods,
+            self.inst.rimworld_version or '',
+            ignored_deps=self._ignored_deps_set(),
+            active_cats=self._filter_cats)
+        self.active.filter_by_ids(ids)
 
     def _build_avail_panel(self) -> QWidget:
         w  = QWidget()
@@ -276,21 +415,6 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
                             ignored_deps=self._ignored_deps_set())
         self.preview.show_mod(info, mid, badges)
 
-    # ── Issue filter ──────────────────────────────────────────────────────────
-
-    def _toggle_filter(self):
-        self._filter_issues = not self._filter_issues
-        if self._filter_issues:
-            ids = get_issue_mod_ids(
-                self.active.get_ids(), self.all_mods,
-                self.inst.rimworld_version or '',
-                ignored_deps=self._ignored_deps_set())
-            self.active.filter_by_ids(ids)
-        else:
-            self.active.filter_by_ids(None)
-            self.ac_search.clear()
-        self._update()
-
     # ── Library ───────────────────────────────────────────────────────────────
 
     def _open_library(self):
@@ -430,21 +554,37 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
     def _update(self):
         if self._defer_updates:
             return
+
         n    = self.active.count()
         n_av = self.avail.count()
         self.cnt.setText(f"{n} active · {n_av} inactive")
 
         ids     = self.active.get_ids()
         ignored = self._ignored_deps_set()
-        errors, warns, order = count_issues(
+        counts  = count_issues(
             ids, self.all_mods,
             self.inst.rimworld_version or '',
             ignored_deps=ignored)
-        text  = format_issue_text(errors, warns, order, self._filter_issues)
-        color = format_issue_color(errors, warns, order)
-        self.issue_btn.setText(text)
-        self.issue_btn.setStyleSheet(
-            f"font-size:11px;padding:0 6px;border:none;color:{color};")
+
+        # Update chip labels and styles
+        for cat, btn in self._chip_btns.items():
+            chip_n = counts.get(cat, 0)
+            self._style_chip(btn, cat in self._filter_cats, chip_n)
+
+        # Update master filter button color
+        worst_color = format_issue_color(counts)
+        if self._filter_on:
+            self.filter_btn.setStyleSheet(
+                f"font-size:10px; padding:1px 8px; border-radius:3px; "
+                f"background:{worst_color}; color:#1a1a1a; font-weight:bold;")
+        else:
+            self.filter_btn.setStyleSheet(
+                f"font-size:10px; padding:1px 8px; border-radius:3px; "
+                f"color:{worst_color};")
+
+        # Re-apply filter if on (counts may have changed)
+        if self._filter_on:
+            self._apply_filter()
 
     def _update_empty_hint(self):
         has_non_dlc = any(

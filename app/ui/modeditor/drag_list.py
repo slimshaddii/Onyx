@@ -1,15 +1,19 @@
 """Drag-and-drop list widget supporting cross-list transfer and internal reorder."""
 
-from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QAbstractItemView, QLabel
+from PyQt6.QtWidgets import (
+    QListWidget, QListWidgetItem, QAbstractItemView,
+    QLabel, QWidget, QHBoxLayout,
+)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 
 COLOR_ROLE = Qt.ItemDataRole.UserRole + 10
 TEXT_ROLE  = Qt.ItemDataRole.UserRole + 11
+NEW_ROLE   = Qt.ItemDataRole.UserRole + 12   # bool — show [NEW] pill
 
 
 class DragDropList(QListWidget):
     items_changed       = pyqtSignal()
-    needs_badge_refresh = pyqtSignal()   # emitted after cross-list drop
+    needs_badge_refresh = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -32,7 +36,15 @@ class DragDropList(QListWidget):
         self._change_timer.start()
 
     def apply_item_widgets(self):
-        """Apply (or update) a colored QLabel on every item."""
+        """
+        Render each item as:
+            ● ModName  [package.id]          [NEW]
+            ↑ dot      ↑ clean name          ↑ pill (only if NEW_ROLE=True)
+
+        The dot color = COLOR_ROLE.
+        The name text = TEXT_ROLE (no issue icons — color carries the info).
+        The [NEW] pill = teal, shown only when NEW_ROLE is True.
+        """
         for i in range(self.count()):
             item = self.item(i)
             if item is None:
@@ -40,21 +52,65 @@ class DragDropList(QListWidget):
 
             text      = item.data(TEXT_ROLE) or item.text() or ''
             color_str = item.data(COLOR_ROLE) or '#e0e0e0'
+            is_new    = bool(item.data(NEW_ROLE))
             tooltip   = item.toolTip()
 
             existing = self.itemWidget(item)
-            if isinstance(existing, QLabel):
-                existing.setText(text)
-                existing.setToolTip(tooltip)
-                existing.setStyleSheet(
-                    f"color:{color_str}; background:transparent; padding:2px 5px;")
+            if isinstance(existing, QWidget) and existing.property('onyx_item'):
+                # Update existing widget in-place
+                dot  = existing.findChild(QLabel, 'dot')
+                name = existing.findChild(QLabel, 'name')
+                pill = existing.findChild(QLabel, 'pill')
+                if dot:
+                    dot.setStyleSheet(
+                        f"color:{color_str}; background:transparent; "
+                        f"padding:0 3px 0 4px; font-size:10px;")
+                if name:
+                    name.setText(text)
+                    name.setToolTip(tooltip)
+                if pill:
+                    pill.setVisible(is_new)
             else:
-                lbl = QLabel(text)
-                lbl.setToolTip(tooltip)
-                lbl.setStyleSheet(
-                    f"color:{color_str}; background:transparent; padding:2px 5px;")
-                self.setItemWidget(item, lbl)
+                # Build new item widget
+                container = QWidget()
+                container.setProperty('onyx_item', True)
+                container.setStyleSheet("background:transparent;")
+                container.setMinimumHeight(24)
+                row = QHBoxLayout(container)
+                row.setContentsMargins(2, 1, 4, 1)
+                row.setSpacing(4)
 
+                # Colored dot — severity indicator
+                dot = QLabel("●")
+                dot.setObjectName('dot')
+                dot.setStyleSheet(
+                    f"color:{color_str}; background:transparent; "
+                    f"padding:0 3px 0 4px; font-size:10px;")
+                dot.setFixedWidth(16)
+                row.addWidget(dot)
+
+                # Mod name — clean, no issue icons
+                name_lbl = QLabel(text)
+                name_lbl.setObjectName('name')
+                name_lbl.setStyleSheet(
+                    "color:#e0e0e0; background:transparent; "
+                    "padding:2px 0;")
+                name_lbl.setToolTip(tooltip)
+                row.addWidget(name_lbl, 1)
+
+                # [NEW] pill — right-aligned teal badge
+                pill = QLabel("NEW")
+                pill.setObjectName('pill')
+                pill.setStyleSheet(
+                    "color:#1a1a1a; background:#74d4cc; "
+                    "border-radius:3px; padding:1px 5px; "
+                    "font-size:9px; font-weight:bold;")
+                pill.setVisible(is_new)
+                row.addWidget(pill)
+
+                self.setItemWidget(item, container)
+
+            # Clear item's built-in text to prevent double-render
             item.setText('')
 
     def _snapshot_items(self) -> list[dict]:
@@ -67,6 +123,7 @@ class DragDropList(QListWidget):
                 'text':    it.data(TEXT_ROLE) or '',
                 'mid':     it.data(Qt.ItemDataRole.UserRole),
                 'color':   it.data(COLOR_ROLE) or '#e0e0e0',
+                'is_new':  bool(it.data(NEW_ROLE)),
                 'tooltip': it.toolTip(),
             })
         return result
@@ -78,6 +135,7 @@ class DragDropList(QListWidget):
             it.setData(Qt.ItemDataRole.UserRole, data['mid'])
             it.setData(COLOR_ROLE, data['color'])
             it.setData(TEXT_ROLE,  data['text'])
+            it.setData(NEW_ROLE,   data.get('is_new', False))
             it.setToolTip(data['tooltip'])
             self.addItem(it)
         self.apply_item_widgets()
@@ -104,7 +162,8 @@ class DragDropList(QListWidget):
                 items_data.append({
                     'text':    item.data(TEXT_ROLE) or '',
                     'mid':     mid,
-                    'color':   item.data(COLOR_ROLE) or '#e0e0e0',
+                    'color':   '#e0e0e0',
+                    'is_new':  False,
                     'tooltip': item.toolTip(),
                 })
                 move_ids.add(mid)
@@ -124,6 +183,7 @@ class DragDropList(QListWidget):
                 it.setData(Qt.ItemDataRole.UserRole, data['mid'])
                 it.setData(COLOR_ROLE, data['color'])
                 it.setData(TEXT_ROLE,  data['text'])
+                it.setData(NEW_ROLE,   data.get('is_new', False))
                 it.setToolTip(data['tooltip'])
                 src.addItem(it)
 
@@ -131,12 +191,9 @@ class DragDropList(QListWidget):
             for data in items_data:
                 it = QListWidgetItem()
                 it.setData(Qt.ItemDataRole.UserRole, data['mid'])
-                # NOTE: Do NOT copy color/text from avail — badges will be
-                # recomputed by needs_badge_refresh → _on_items_changed.
-                # Set neutral defaults so apply_item_widgets renders something
-                # visible while the refresh is pending.
                 it.setData(COLOR_ROLE, '#e0e0e0')
                 it.setData(TEXT_ROLE,  data['text'])
+                it.setData(NEW_ROLE,   False)
                 it.setToolTip(data['tooltip'])
                 if drop_row >= 0:
                     self.insertItem(drop_row, it)
@@ -151,11 +208,7 @@ class DragDropList(QListWidget):
             self.apply_item_widgets()
 
             event.acceptProposedAction()
-
-            # Emit needs_badge_refresh so the dialog can recompute badges
-            # for the active list (colors, [NEW], error/warn prefixes).
             self.needs_badge_refresh.emit()
-
             self._emit_changed()
             src._emit_changed()
 
