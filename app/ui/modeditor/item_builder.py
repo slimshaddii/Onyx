@@ -2,10 +2,11 @@
 Item creation and badge logic for the mod editor.
 """
 
-from PyQt6.QtWidgets import QListWidgetItem
 from PyQt6.QtCore import Qt
 
-from app.ui.modeditor.drag_list import COLOR_ROLE, TEXT_ROLE, NEW_ROLE
+from app.ui.modeditor.drag_list import (
+    ModItem, COLOR_ROLE, TEXT_ROLE, NEW_ROLE,
+)
 from app.ui.modeditor.issue_checker import get_badges, check_version
 
 COLOR_ERROR      = '#ff4444'
@@ -29,10 +30,10 @@ class ItemBuilder:
     """
     Mixin for ModEditorDialog.
 
-    Label format: "ModName  [package.id]"
-    No issue icons in the label — the colored dot in apply_item_widgets
-    communicates severity. [NEW] pill is rendered separately via NEW_ROLE.
-    [C] prefix kept for Core (only structural label we keep).
+    Host class must expose:
+        self.inst, self.all_mods, self.names,
+        self.active, self.avail,
+        self._original_mods, self._known_mod_ids
     """
 
     def _game_version(self) -> str:
@@ -45,20 +46,14 @@ class ItemBuilder:
         return worst[1]
 
     def _make_item(self, label: str, mid: str, color: str,
-                   tooltip: str, is_new: bool = False) -> QListWidgetItem:
-        it = QListWidgetItem(label)
-        it.setData(Qt.ItemDataRole.UserRole, mid)
-        it.setData(COLOR_ROLE, color)
-        it.setData(TEXT_ROLE,  label)
-        it.setData(NEW_ROLE,   is_new)
-        it.setToolTip(tooltip)
-        return it
+                   tooltip: str, is_new: bool = False) -> ModItem:
+        """Create a ModItem — replaces QListWidgetItem creation."""
+        return ModItem(
+            text=label, mid=mid, color=color,
+            tooltip=tooltip, is_new=is_new)
 
-    def _build_label(self, name: str, mid: str, is_core: bool = False) -> str:
-        """
-        Build clean label — no issue icons.
-        Format: "Name  [mid]"  or  "[C] Name  [mid]" for Core.
-        """
+    def _build_label(self, name: str, mid: str,
+                     is_core: bool = False) -> str:
         label = f"{name}  [{mid}]"
         if is_core:
             label = f"[C] {label}"
@@ -110,8 +105,8 @@ class ItemBuilder:
 
     def _refresh_badges(self):
         """
-        Recompute badges for every item in the active list.
-        Updates COLOR_ROLE, TEXT_ROLE, NEW_ROLE.
+        Recompute badges for every item in the active list in one pass.
+        Updates color, tooltip, is_new on each ModItem directly.
         Caller must invoke active.apply_item_widgets() afterwards.
         """
         order        = self.active.get_ids()
@@ -120,11 +115,11 @@ class ItemBuilder:
         ignored_deps = set(self.inst.ignored_deps)
 
         for i in range(self.active.count()):
-            it  = self.active.item(i)
-            mid = it.data(Qt.ItemDataRole.UserRole)
-            if not mid:
+            it = self.active.item(i)
+            if it is None or not it.mid:
                 continue
 
+            mid     = it.mid
             name    = self.names.get(mid, mid)
             is_new  = mid not in self._original_mods
             is_core = mid.lower() == 'ludeon.rimworld'
@@ -144,11 +139,18 @@ class ItemBuilder:
             else:
                 color, tip = COLOR_NORMAL, ''
 
-            it.setData(TEXT_ROLE,  label)
-            it.setData(COLOR_ROLE, color)
-            it.setData(NEW_ROLE,   is_new)
-            it.setToolTip(tip)
-            it.setText(label)
+            # Update ModItem directly — model notifies view
+            it.text    = label
+            it.color   = color
+            it.tooltip = tip
+            it.is_new  = is_new
+
+            # Notify model that this row changed
+            index = self.active._model.index(i)
+            self.active._model.dataChanged.emit(
+                index, index,
+                [COLOR_ROLE, TEXT_ROLE, NEW_ROLE,
+                 Qt.ItemDataRole.ToolTipRole])
 
     # ── Available list ────────────────────────────────────────────────────────
 

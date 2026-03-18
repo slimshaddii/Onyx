@@ -26,7 +26,7 @@ class ModContext:
         it = self.active.itemAt(pos)
         if not it:
             return
-        mid  = it.data(Qt.ItemDataRole.UserRole)
+        mid  = it.mid
         info = self.all_mods.get(mid)
         m    = QMenu(self)
 
@@ -88,7 +88,7 @@ class ModContext:
         it = self.avail.itemAt(pos)
         if not it:
             return
-        mid      = it.data(Qt.ItemDataRole.UserRole)
+        mid      = it.mid
         info     = self.all_mods.get(mid)
         selected = self.avail.selectedItems()
         m        = QMenu(self)
@@ -96,7 +96,7 @@ class ModContext:
 
         removable = [
             i for i in selected
-            if i.data(Qt.ItemDataRole.UserRole) not in VANILLA_AND_DLCS
+            if i.mid not in VANILLA_AND_DLCS
         ]
         if removable:
             m.addSeparator()

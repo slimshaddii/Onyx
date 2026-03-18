@@ -38,7 +38,7 @@ class ModFixes:
         for dep in activatable:
             if dep in self.all_mods and dep not in set(self.active.get_ids()):
                 for i in range(self.avail.count()):
-                    if self.avail.item(i).data(0x0100) == dep:
+                    if self.avail.item(i) and self.avail.item(i).mid == dep:
                         self.avail.takeItem(i)
                         break
                 self._mk_active(dep)

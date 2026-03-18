@@ -392,7 +392,7 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
     def _show_preview(self, item):
         if not item:
             return
-        mid    = item.data(Qt.ItemDataRole.UserRole)
+        mid    = item.mid
         info   = self.all_mods.get(mid)
         order  = self.active.get_ids()
         badges = get_badges(mid, self.all_mods, set(order),
@@ -528,9 +528,9 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
 
     def _avail_ids(self) -> list[str]:
         return [
-            self.avail.item(i).data(Qt.ItemDataRole.UserRole)
+            self.avail.item(i).mid
             for i in range(self.avail.count())
-            if self.avail.item(i).data(Qt.ItemDataRole.UserRole)
+            if self.avail.item(i) and self.avail.item(i).mid
         ]
 
     def _get_avail_ids(self) -> list[str]:
@@ -573,8 +573,8 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
 
     def _update_empty_hint(self):
         has_non_dlc = any(
-            self.avail.item(i).data(Qt.ItemDataRole.UserRole)
-            not in VANILLA_AND_DLCS
-            for i in range(self.avail.count()))
+            self.avail.item(i).mid not in VANILLA_AND_DLCS
+            for i in range(self.avail.count())
+            if self.avail.item(i))
         self.empty_hint.setVisible(
             self.avail.count() == 0 or not has_non_dlc)

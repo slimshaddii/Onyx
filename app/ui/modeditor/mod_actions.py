@@ -15,10 +15,11 @@ class ModActions:
     Mixin for ModEditorDialog.
     Requires: self.active, self.avail, self.inst, self.rw,
               self.all_mods, self.names,
-              self._defer_updates, self._filter_issues,
+              self._defer_updates, self._filter_on,
               self._mk_active(), self._mk_avail(),
               self._refresh_badges(), self._update(),
-              self._update_empty_hint(), self._avail_ids()
+              self._update_empty_hint(), self._avail_ids(),
+              self._apply_filter()
     """
 
     def _add_sel(self):
@@ -29,8 +30,9 @@ class ModActions:
         self.active.setUpdatesEnabled(False)
         self.avail.setUpdatesEnabled(False)
 
+        # Collect mids then remove in reverse row order
         rows = sorted([self.avail.row(it) for it in selected], reverse=True)
-        mids = [it.data(0x0100) for it in selected]
+        mids = [it.mid for it in selected]
         for row in rows:
             self.avail.takeItem(row)
         for mid in mids:
@@ -50,9 +52,10 @@ class ModActions:
         if not selected:
             return
 
-        to_remove, has_core = [], False
+        to_remove = []
+        has_core  = False
         for it in selected:
-            if it.data(0x0100).lower() == 'ludeon.rimworld':
+            if it.mid.lower() == 'ludeon.rimworld':
                 has_core = True
             else:
                 to_remove.append(it)
@@ -66,12 +69,13 @@ class ModActions:
         self.active.setUpdatesEnabled(False)
         self.avail.setUpdatesEnabled(False)
 
-        rows    = sorted([self.active.row(it) for it in to_remove], reverse=True)
+        rows    = sorted([self.active.row(it) for it in to_remove],
+                         reverse=True)
         removed = []
         for row in rows:
             it = self.active.takeItem(row)
             if it:
-                removed.append(it.data(0x0100))
+                removed.append(it.mid)
         for mid in removed:
             if mid in self.all_mods:
                 self._mk_avail(mid, self.all_mods[mid])
@@ -83,7 +87,8 @@ class ModActions:
         if has_core:
             QMessageBox.information(
                 self, "Note",
-                f"Deactivated {len(removed)} mod(s). Core was kept (required).")
+                f"Deactivated {len(removed)} mod(s). "
+                f"Core was kept (required).")
 
         self.avail.apply_item_widgets()
         self._update_empty_hint()
@@ -94,11 +99,8 @@ class ModActions:
         self.active.setUpdatesEnabled(False)
         self.avail.setUpdatesEnabled(False)
 
-        mids = []
-        while self.avail.count():
-            it = self.avail.takeItem(0)
-            if it:
-                mids.append(it.data(0x0100))
+        items = self.avail.popAllItems()
+        mids  = [it.mid for it in items if it.mid]
         for mid in mids:
             self._mk_active(mid, skip_badges=True)
 
@@ -116,18 +118,19 @@ class ModActions:
         self.active.setUpdatesEnabled(False)
         self.avail.setUpdatesEnabled(False)
 
-        to_remove = [
-            i for i in range(self.active.count())
-            if self.active.item(i).data(0x0100).lower() != 'ludeon.rimworld'
-        ]
-        removed = []
-        for i in reversed(to_remove):
-            it = self.active.takeItem(i)
-            if it:
-                removed.append(it.data(0x0100))
-        for mid in removed:
-            if mid in self.all_mods:
-                self._mk_avail(mid, self.all_mods[mid])
+        all_items = self.active._model.allItems()
+        to_remove = [it for it in all_items
+                    if it.mid.lower() != 'ludeon.rimworld']
+        keep      = [it for it in all_items
+                    if it.mid.lower() == 'ludeon.rimworld']
+
+        self.active._model.beginResetModel()
+        self.active._model._items = keep
+        self.active._model.endResetModel()
+
+        for it in to_remove:
+            if it.mid in self.all_mods:
+                self._mk_avail(it.mid, self.all_mods[it.mid])
 
         self.avail.setUpdatesEnabled(True)
         self.active.setUpdatesEnabled(True)
@@ -138,28 +141,30 @@ class ModActions:
         self._update()
 
     def _on_active_double_click(self, item):
+        """Receives a ModItem from DragDropList.itemDoubleClicked."""
         if not item:
             return
-        mid = item.data(0x0100)
-        if mid.lower() == 'ludeon.rimworld':
+        if item.mid.lower() == 'ludeon.rimworld':
             QMessageBox.warning(self, "Cannot Remove",
                                 "Core (ludeon.rimworld) is required.")
             return
-        self.active.takeItem(self.active.row(item))
-        if mid in self.all_mods:
-            self._mk_avail(mid, self.all_mods[mid])
+        row = self.active.row(item)
+        if row >= 0:
+            self.active.takeItem(row)
+        if item.mid in self.all_mods:
+            self._mk_avail(item.mid, self.all_mods[item.mid])
         self.avail.apply_item_widgets()
         self._update_empty_hint()
         self._update()
 
     def _remove_from_instance_batch(self, items: list):
+        """items is list[ModItem]"""
         if not items:
             return
         names = []
         for it in items:
-            mid  = it.data(0x0100)
-            info = self.all_mods.get(mid)
-            names.append(info.name if info else mid)
+            info = self.all_mods.get(it.mid)
+            names.append(info.name if info else it.mid)
 
         msg  = f"Remove {len(items)} mod(s) from this instance?\n\n"
         msg += "\n".join(f"  - {n}" for n in names[:10])
@@ -184,7 +189,8 @@ class ModActions:
         ids = self.active.get_ids()
         if not ids:
             return
-        self.all_mods = self.rw.get_installed_mods(force_rescan=True)
+        self.all_mods = self.rw.get_installed_mods(force_rescan=True,
+                                                    max_age_seconds=0)
         sorted_ids    = auto_sort_mods(ids, self.rw)
         self.active.clear()
         self._batch_load_active(sorted_ids)
@@ -200,10 +206,10 @@ class ModActions:
             if mid in set(self.active.get_ids()):
                 continue
             self._mk_active(mid)
-            for i in range(self.avail.count()):
-                if self.avail.item(i).data(0x0100) == mid:
-                    self.avail.takeItem(i)
-                    break
+            # Remove from avail if present
+            idx = self.avail._model.indexOfMid(mid)
+            if idx >= 0:
+                self.avail.takeItem(idx)
         self.active.apply_item_widgets()
         self._update_empty_hint()
         self._update()
@@ -224,10 +230,9 @@ class ModActions:
             if mid in active_set:
                 continue
             self._mk_active(mid)
-            for i in range(self.avail.count()):
-                if self.avail.item(i).data(0x0100) == mid:
-                    self.avail.takeItem(i)
-                    break
+            idx = self.avail._model.indexOfMid(mid)
+            if idx >= 0:
+                self.avail.takeItem(idx)
         self.active.apply_item_widgets()
         self._update_empty_hint()
         self._update()
