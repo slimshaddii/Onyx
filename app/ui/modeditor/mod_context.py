@@ -7,8 +7,6 @@ from PyQt6.QtCore import Qt
 
 from app.core.steamcmd import DownloadQueue
 from app.core.modlist import VANILLA_AND_DLCS
-from app.core.paths import settings_path
-from app.utils.file_utils import load_json
 
 
 class ModContext:
@@ -161,7 +159,8 @@ class ModContext:
             QMessageBox.critical(self, "Delete Failed", str(e))
             return
 
-        self.all_mods = self.rw.get_installed_mods(force_rescan=True)
+        self.all_mods = self.rw.get_installed_mods(force_rescan=True,
+                                                    max_age_seconds=0)
         self.names    = {pid: i.name for pid, i in self.all_mods.items()}
 
         self.avail.apply_item_widgets()
@@ -177,9 +176,10 @@ class ModContext:
                 "This mod has no Workshop ID — cannot redownload.")
             return
 
-        s             = load_json(settings_path(), {})
-        steamcmd_path = s.get('steamcmd_path', '')
-        data_root     = s.get('data_root', '')
+        from app.core.app_settings import AppSettings
+        _s            = AppSettings.instance()
+        steamcmd_path = _s.steamcmd_path
+        data_root     = _s.data_root
 
         if not steamcmd_path or not Path(steamcmd_path).exists():
             QMessageBox.warning(
@@ -195,7 +195,7 @@ class ModContext:
             steamcmd_path=steamcmd_path,
             destination=str(Path(data_root) / 'mods'),
             max_concurrent=1,
-            username=s.get('steamcmd_username', ''))
+            username=_s.steamcmd_username)          # ← fixed
 
         dlg = DownloadProgressDialog(
             self, queue, [(info.workshop_id, info.name)])
@@ -207,7 +207,8 @@ class ModContext:
     def _on_redownload_done(self, results: list, mod_name: str):
         ok = sum(1 for _, s, _ in results if s)
         if ok:
-            self.all_mods = self.rw.get_installed_mods(force_rescan=True)
+            self.all_mods = self.rw.get_installed_mods(force_rescan=True,
+                                                        max_age_seconds=0)
             self.names    = {pid: i.name for pid, i in self.all_mods.items()}
             self._refresh_badges()
             self.active.apply_item_widgets()

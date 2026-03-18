@@ -1,4 +1,4 @@
-import os
+import time
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
@@ -43,23 +43,16 @@ class ModInfo:
         if root is None:
             return None
 
-        package_id = get_text(root, 'packageId', mod_path.name).lower().strip()
-        name       = get_text(root, 'name', mod_path.name)
-        author     = get_text(root, 'author', 'Unknown')
+        package_id  = get_text(root, 'packageId', mod_path.name).lower().strip()
+        name        = get_text(root, 'name', mod_path.name)
+        author      = get_text(root, 'author', 'Unknown')
         description = get_text(root, 'description', '')
-        versions   = get_list(root, 'supportedVersions')
+        versions    = get_list(root, 'supportedVersions')
 
-        # Derive major.minor for version-specific tag lookups
-        parts = game_version.split('.')
+        parts         = game_version.split('.')
         major_version = f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else game_version
 
-        # ── Shared helper: extract package IDs from a *ByVersion element ──
         def _extract_by_version(parent_elem, text_only: bool = False) -> set[str]:
-            """
-            Try exact version → major.minor → first child with matching major.
-            text_only=True  → read child.text directly (loadAfter/loadBefore style)
-            text_only=False → read <packageId> sub-element (modDependencies style)
-            """
             result: set[str] = set()
             if parent_elem is None:
                 return result
@@ -72,7 +65,6 @@ class ModInfo:
                         if val:
                             result.add(val.lower().strip())
                     return result
-            # Fallback: first child whose version starts with major number
             major_num = major_version.split('.')[0]
             for child in parent_elem:
                 if child.tag.lstrip('v').startswith(major_num):
@@ -84,7 +76,6 @@ class ModInfo:
                     break
             return result
 
-        # ── Dependencies ──────────────────────────────────────────────────
         deps: set[str] = set()
         deps_elem = root.find('modDependencies')
         if deps_elem is not None:
@@ -93,25 +84,23 @@ class ModInfo:
                 if dep_id:
                     deps.add(dep_id.lower().strip())
         deps |= _extract_by_version(root.find('modDependenciesByVersion'),
-                                    text_only=False)
+                                     text_only=False)
 
-        # ── Load after ────────────────────────────────────────────────────
-        load_after: set[str] = {x.lower().strip() for x in get_list(root, 'loadAfter')}
+        load_after: set[str] = {x.lower().strip()
+                                  for x in get_list(root, 'loadAfter')}
         load_after |= _extract_by_version(root.find('loadAfterByVersion'),
-                                          text_only=True)
-
-        # ── Load before ───────────────────────────────────────────────────
-        load_before: set[str] = {x.lower().strip() for x in get_list(root, 'loadBefore')}
-        load_before |= _extract_by_version(root.find('loadBeforeByVersion'),
                                            text_only=True)
 
-        # ── Incompatible with ─────────────────────────────────────────────
-        incompatible: set[str] = {x.lower().strip()
-                                   for x in get_list(root, 'incompatibleWith')}
-        incompatible |= _extract_by_version(root.find('incompatibleWithByVersion'),
+        load_before: set[str] = {x.lower().strip()
+                                   for x in get_list(root, 'loadBefore')}
+        load_before |= _extract_by_version(root.find('loadBeforeByVersion'),
                                             text_only=True)
 
-        # ── Preview image ─────────────────────────────────────────────────
+        incompatible: set[str] = {x.lower().strip()
+                                    for x in get_list(root, 'incompatibleWith')}
+        incompatible |= _extract_by_version(
+            root.find('incompatibleWithByVersion'), text_only=True)
+
         preview = ''
         for pname in ['Preview.png', 'preview.png', 'Preview.jpg', 'preview.jpg']:
             pp = about_xml.parent / pname
@@ -119,7 +108,6 @@ class ModInfo:
                 preview = str(pp)
                 break
 
-        # ── Workshop ID ───────────────────────────────────────────────────
         workshop_id = ''
         for pid_name in ['PublishedFileId.txt', 'publishedfileid.txt']:
             pid_file = about_xml.parent / pid_name
@@ -148,11 +136,12 @@ class ModInfo:
 
 class RimWorldDetector:
     def __init__(self, game_path: Optional[str] = None):
-        self.game_path   = Path(game_path) if game_path else None
+        self.game_path    = Path(game_path) if game_path else None
         self.exe_path: Optional[Path] = None
         self.version: str = ''
         self._mods_cache: dict[str, ModInfo] = {}
         self._extra_paths: list[str] = []
+        self._cache_time: float = 0.0      # ← 9.3: tracks last scan timestamp
 
         if self.game_path:
             self._detect_exe()
@@ -182,6 +171,7 @@ class RimWorldDetector:
         self._detect_exe()
         self._detect_version()
         self._mods_cache.clear()
+        self._cache_time = 0.0    # invalidate cache age on path change
 
     def get_game_version_short(self) -> str:
         """Return major.minor (e.g. '1.6' from '1.6.4630 rev467')."""
@@ -192,11 +182,30 @@ class RimWorldDetector:
         return '1.6'
 
     def get_installed_mods(self, extra_mod_paths: Optional[list[str]] = None,
-                           force_rescan: bool = False) -> dict[str, ModInfo]:
+                           force_rescan: bool = False,
+                           max_age_seconds: float = 30.0) -> dict[str, ModInfo]:
+        """
+        Parameters
+        ----------
+        extra_mod_paths : list of directory paths to scan in addition to game dirs
+        force_rescan    : bypass cache
+        max_age_seconds : if cache is younger than this, skip rescan even when
+                          force_rescan=True. Pass 0 to always force a real scan.
+        """
         if extra_mod_paths is not None:
             self._extra_paths = list(extra_mod_paths)
 
+        now       = time.monotonic()
+        cache_age = now - self._cache_time
+
+        # Normal cache hit
         if self._mods_cache and not force_rescan:
+            return self._mods_cache
+
+        # 9.3: Cache is fresh enough — skip even a force_rescan
+        if (self._mods_cache and force_rescan
+                and max_age_seconds > 0
+                and cache_age < max_age_seconds):
             return self._mods_cache
 
         mods: dict[str, ModInfo] = {}
@@ -208,16 +217,14 @@ class RimWorldDetector:
             if not dirpath.exists() or resolved in scanned:
                 return
             scanned.add(resolved)
-            found = 0
             try:
                 for mod_dir in dirpath.iterdir():
                     if not mod_dir.is_dir():
                         continue
-                    info = ModInfo.from_path(mod_dir, source=source,
-                                            game_version=game_ver)
+                    info = ModInfo.from_path(
+                        mod_dir, source=source, game_version=game_ver)
                     if info and info.package_id not in mods:
                         mods[info.package_id] = info
-                        found += 1
             except PermissionError:
                 pass
 
@@ -229,19 +236,22 @@ class RimWorldDetector:
             p = Path(ep)
             if p.exists():
                 ep_lower = str(p).lower()
-                source = ('workshop'
-                          if ('workshop' in ep_lower or 'onyx' in ep_lower)
-                          else 'local')
+                source   = ('workshop'
+                            if ('workshop' in ep_lower or 'onyx' in ep_lower)
+                            else 'local')
                 scan(p, source)
 
         self._mods_cache = mods
+        self._cache_time = time.monotonic()
         return mods
 
     def get_detected_dlcs(self) -> list[str]:
         mods = self.get_installed_mods()
         dlcs = [
-            'ludeon.rimworld.royalty', 'ludeon.rimworld.ideology',
-            'ludeon.rimworld.biotech', 'ludeon.rimworld.anomaly',
+            'ludeon.rimworld.royalty',
+            'ludeon.rimworld.ideology',
+            'ludeon.rimworld.biotech',
+            'ludeon.rimworld.anomaly',
             'ludeon.rimworld.odyssey',
         ]
         return [d for d in dlcs if d in mods]

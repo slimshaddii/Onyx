@@ -17,30 +17,35 @@ from app.core.log_parser import LogParser
 from app.core.auto_detect import auto_detect_all
 from app.core.steam_integration import DownloadMethod
 from app.core.modlist import export_rimsort_modlist
+from app.core.app_settings import AppSettings          # ← 9.6
+from app.core.mod_watcher import ModWatcher            # ← 9.2
 from app.core.paths import (
     get_default_data_root, ensure_data_dirs, instances_dir, mods_dir,
-    settings_path,
 )
 from app.ui.instance_list import InstanceGridPanel
 from app.ui.instance_detail import InstanceDetailPanel
 from app.ui.settings_dialog import SettingsDialog
-from app.utils.file_utils import load_json, save_json
-
-DEFAULTS = {
-    'rimworld_exe': '', 'data_root': '', 'steam_api_key': '',
-    'steamcmd_path': '', 'steam_workshop_path': '', 'extra_mod_paths': [],
-    'download_method': 'steamcmd', 'is_steam_copy': False,
-    'window': {'width': 1200, 'height': 720, 'x': 80, 'y': 60},
-    'auto_backup_on_launch': True, 'backup_count': 3,
-    'steamcmd_username': '', 'offered_import': False,
-}
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.settings = load_json(settings_path(), DEFAULTS)
-        for k, v in DEFAULTS.items():
+
+        # ── 9.6: Use AppSettings singleton ───────────────────────────────────
+        self._s = AppSettings.instance()
+
+        # Back-compat: keep self.settings as a dict view for legacy callers
+        # (settings_dialog still works with dicts)
+        self.settings = self._s.as_dict()
+        for k, v in {
+            'rimworld_exe': '', 'data_root': '', 'steam_api_key': '',
+            'steamcmd_path': '', 'steam_workshop_path': '',
+            'extra_mod_paths': [], 'download_method': 'steamcmd',
+            'is_steam_copy': False,
+            'window': {'width': 1200, 'height': 720, 'x': 80, 'y': 60},
+            'auto_backup_on_launch': True, 'backup_count': 3,
+            'steamcmd_username': '', 'offered_import': False,
+        }.items():
             self.settings.setdefault(k, v)
 
         dr = self.settings.get('data_root') or str(get_default_data_root())
@@ -71,6 +76,11 @@ class MainWindow(QMainWindow):
         self.log_parser = LogParser()
         self._child_windows: list = []
 
+        # ── 9.2: Start file watcher ───────────────────────────────────────────
+        self._mod_watcher = ModWatcher(self)
+        self._mod_watcher.mods_changed.connect(self._on_mods_changed_on_disk)
+        self._update_watcher_paths()
+
         self._build_toolbar()
         self._build_ui()
         self._build_statusbar()
@@ -85,10 +95,9 @@ class MainWindow(QMainWindow):
         elif not self.settings.get('offered_import'):
             QTimer.singleShot(600, self._offer_import)
 
-    # ── RimWorld / mod scan helpers ───────────────────────────────────────
+    # ── RimWorld / mod scan helpers ───────────────────────────────────────────
 
     def _all_mod_paths(self) -> list[str]:
-        """Assemble the ordered list of mod search directories."""
         paths: list[str] = []
         dr = self.settings.get('data_root', '')
         if dr:
@@ -116,15 +125,34 @@ class MainWindow(QMainWindow):
         self.rw.get_installed_mods(self._all_mod_paths(), force_rescan=True)
 
     def _rescan_mods(self):
-        """
-        Force a fresh mod scan and return the updated dict.
-        Call this only when mods have actually changed on disk
-        (after download, delete, or workshop install).
-        All other reads should use rw.get_installed_mods() without force_rescan.
-        """
-        return self.rw.get_installed_mods(self._all_mod_paths(), force_rescan=True)
+        """Force a real rescan regardless of cache age."""
+        return self.rw.get_installed_mods(self._all_mod_paths(),
+                                        force_rescan=True,
+                                        max_age_seconds=0)
 
-    # ── UI construction ───────────────────────────────────────────────────
+    # ── 9.2: File watcher ─────────────────────────────────────────────────────
+
+    def _update_watcher_paths(self):
+        """Tell ModWatcher which directories to watch."""
+        self._mod_watcher.update_paths(
+            extra_mod_paths=self.settings.get('extra_mod_paths', []),
+            steam_workshop_path=self.settings.get('steam_workshop_path', ''),
+            rimworld_exe=self.settings.get('rimworld_exe', ''),
+        )
+
+    def _on_mods_changed_on_disk(self):
+        """
+        Called (debounced, 2 s) when the filesystem watcher detects
+        a change in any watched mod directory.
+
+        Invalidates the mod cache and refreshes the UI.
+        Does NOT open any dialogs — silent background update.
+        """
+        self._rescan_mods()
+        self.refresh()
+        self.sl.setText("Mods updated")
+
+    # ── UI construction ───────────────────────────────────────────────────────
 
     def _build_toolbar(self):
         tb = QToolBar()
@@ -187,27 +215,28 @@ class MainWindow(QMainWindow):
         self.setStatusBar(sb)
         self.sl = QLabel("Ready")
         sb.addWidget(self.sl, 1)
-        self.vl = QLabel(f"RimWorld {self.rw.version}" if self.rw.version else "")
+        self.vl = QLabel(
+            f"RimWorld {self.rw.version}" if self.rw.version else "")
         sb.addPermanentWidget(self.vl)
         self.gl = QLabel("")
         sb.addPermanentWidget(self.gl)
 
-    # ── Refresh ───────────────────────────────────────────────────────────
+    # ── Refresh ───────────────────────────────────────────────────────────────
 
     def refresh(self, rescan_mods: bool = False):
-        """Reload the instance grid. Pass rescan_mods=True only when mods changed on disk."""
         if rescan_mods:
             self._rescan_mods()
         insts = self.im.scan_instances()
         self.grid.set_instances(insts)
-        self.sl.setText(f"{len(insts)} instance{'s' if len(insts) != 1 else ''}")
+        self.sl.setText(
+            f"{len(insts)} instance{'s' if len(insts) != 1 else ''}")
 
     def _open_child(self, dlg):
         self._child_windows = [w for w in self._child_windows if w.isVisible()]
         self._child_windows.append(dlg)
         dlg.show()
 
-    # ── Instance handlers ─────────────────────────────────────────────────
+    # ── Instance handlers ─────────────────────────────────────────────────────
 
     def _on_select(self, inst):
         self.detail.set_instance(inst, self.rw)
@@ -231,17 +260,13 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Launch Failed", r.message)
 
     def _on_edit(self, inst):
-        """Open instance metadata editor (name, notes, icon, etc.)."""
         from app.ui.instance_edit import InstanceEditDialog
-        # No rescan needed — InstanceEditDialog doesn't use mod data
         dlg = InstanceEditDialog(None, inst, self.rw)
         dlg.instance_changed.connect(self.refresh)
         self._open_child(dlg)
 
     def _on_edit_mods(self, inst):
-        """Open the full mod editor."""
         from app.ui.modeditor import ModEditorDialog
-        # ModEditorDialog does its own force_rescan=True in __init__
         dlg = ModEditorDialog(self, inst, self.rw)
         if dlg.exec():
             self.refresh(rescan_mods=True)
@@ -275,16 +300,15 @@ class MainWindow(QMainWindow):
             self, "Export", f"{inst.name}_modlist.txt", "Text (*.txt)")
         if path:
             installed = self.rw.get_installed_mods(self._all_mod_paths())
-            names = {pid: info.name for pid, info in installed.items()}
+            names     = {pid: info.name for pid, info in installed.items()}
             export_rimsort_modlist(path, inst.mods, names)
             QMessageBox.information(
                 self, "Export", f"Exported {len(inst.mods)} mods.")
 
-    # ── .onyx pack handlers ───────────────────────────────────────────────
+    # ── .onyx pack handlers ───────────────────────────────────────────────────
 
     def _on_export_pack(self, inst):
         from app.ui.onyxpack_dialog import OnyxExportDialog
-        # Use cached mods — no disk change happened
         dlg = OnyxExportDialog(self, inst, self.rw)
         dlg.exec()
 
@@ -295,14 +319,13 @@ class MainWindow(QMainWindow):
         if not path:
             return
         from app.ui.onyxpack_dialog import OnyxImportDialog
-        # Rescan before import so we know which mods are already installed
         self._rescan_mods()
         dlg = OnyxImportDialog(self, Path(path), self.rw, self.im,
-                                dl_queue=self.dl_queue)
+                               dl_queue=self.dl_queue)
         if dlg.exec():
             self.refresh()
 
-    # ── Folder ────────────────────────────────────────────────────────────
+    # ── Folder ────────────────────────────────────────────────────────────────
 
     @staticmethod
     def _open_folder(inst):
@@ -312,7 +335,7 @@ class MainWindow(QMainWindow):
         else:
             subprocess.Popen(['xdg-open', p])
 
-    # ── Workshop ──────────────────────────────────────────────────────────
+    # ── Workshop ──────────────────────────────────────────────────────────────
 
     def _on_workshop(self):
         for w in self._child_windows:
@@ -322,10 +345,11 @@ class MainWindow(QMainWindow):
                 return
 
         from app.ui.workshop import WorkshopBrowserDialog
-        # Use cached mods for the installed_workshop_ids set — no rescan needed here
         installed = self.rw.get_installed_mods(self._all_mod_paths())
-        ws_ids  = {info.workshop_id for info in installed.values() if info.workshop_id}
-        method  = DownloadMethod(self.settings.get('download_method', 'steamcmd'))
+        ws_ids    = {info.workshop_id
+                     for info in installed.values() if info.workshop_id}
+        method    = DownloadMethod(
+            self.settings.get('download_method', 'steamcmd'))
 
         dlg = WorkshopBrowserDialog(
             None,
@@ -341,11 +365,10 @@ class MainWindow(QMainWindow):
     def _on_child_closed(self, dlg):
         if dlg in self._child_windows:
             self._child_windows.remove(dlg)
-        # Rescan after workshop browser closes — user may have downloaded mods
         self._rescan_mods()
         self.refresh()
 
-    # ── Logs ──────────────────────────────────────────────────────────────
+    # ── Logs ──────────────────────────────────────────────────────────────────
 
     def _on_logs(self):
         from app.ui.log_viewer import LogViewerDialog
@@ -353,13 +376,14 @@ class MainWindow(QMainWindow):
             None, self.log_parser, self.detail.current_instance)
         self._open_child(dlg)
 
-    # ── Settings ──────────────────────────────────────────────────────────
+    # ── Settings ──────────────────────────────────────────────────────────────
 
     def _on_settings(self):
         dlg = SettingsDialog(self, self.settings)
         if dlg.exec():
             self.settings = dlg.get_settings()
-            save_json(settings_path(), self.settings)
+            # ── 9.6: Sync back to AppSettings singleton ───────────────────────
+            self._s.update(self.settings)
             self._apply()
 
     def _apply(self):
@@ -374,17 +398,20 @@ class MainWindow(QMainWindow):
             self.im.instances_root         = instances_dir(Path(dr))
             self.steamcmd.mods_destination = str(mods_dir(Path(dr)))
             self.dl_queue.destination      = str(mods_dir(Path(dr)))
-        self.launcher.auto_backup  = self.settings.get('auto_backup_on_launch', True)
+        self.launcher.auto_backup  = self.settings.get(
+            'auto_backup_on_launch', True)
         self.launcher.backup_count = self.settings.get('backup_count', 3)
         cmd = self.settings.get('steamcmd_path', '')
         if cmd:
-            self.steamcmd.steamcmd_path  = cmd
-            self.dl_queue.steamcmd_path  = cmd
+            self.steamcmd.steamcmd_path = cmd
+            self.dl_queue.steamcmd_path = cmd
         self.dl_queue.username = self.settings.get('steamcmd_username', '')
-        self._init_rw()   # full rescan — paths may have changed
+        # Update file watcher paths after settings change
+        self._update_watcher_paths()
+        self._init_rw()
         self.refresh()
 
-    # ── Auto-detect ───────────────────────────────────────────────────────
+    # ── Auto-detect ───────────────────────────────────────────────────────────
 
     def _auto_detect(self):
         r = auto_detect_all()
@@ -402,12 +429,13 @@ class MainWindow(QMainWindow):
                 if r.steamcmd_path:
                     self.settings['steamcmd_path'] = r.steamcmd_path
                 if r.extra_mod_paths:
-                    existing = set(self.settings.get('extra_mod_paths', []))
+                    existing = set(
+                        self.settings.get('extra_mod_paths', []))
                     existing.update(r.extra_mod_paths)
                     self.settings['extra_mod_paths'] = list(existing)
                 self.settings['download_method'] = (
                     'steam_native' if r.is_steam_copy else 'steamcmd')
-                save_json(settings_path(), self.settings)
+                self._s.update(self.settings)
                 self._apply()
                 QTimer.singleShot(300, self._offer_import)
         else:
@@ -419,7 +447,7 @@ class MainWindow(QMainWindow):
         if self.settings.get('offered_import'):
             return
         self.settings['offered_import'] = True
-        save_json(settings_path(), self.settings)
+        self._s.update(self.settings)
         existing = self.im.detect_existing_rw_data()
         if not existing:
             return
@@ -436,7 +464,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.warning(self, "Error", str(e))
 
-    # ── Timer tick ────────────────────────────────────────────────────────
+    # ── Timer tick ────────────────────────────────────────────────────────────
 
     def _tick(self):
         if self.launcher.is_running():
@@ -446,10 +474,11 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, e):
         self._timer.stop()
+        self._mod_watcher.stop()        # ← 9.2: stop watcher on exit
         self.settings['window'] = {
             'width': self.width(), 'height': self.height(),
             'x': self.x(), 'y': self.y()}
-        save_json(settings_path(), self.settings)
+        self._s.update(self.settings)  # ← 9.6: final save via singleton
         for w in list(self._child_windows):
             w.close()
         super().closeEvent(e)

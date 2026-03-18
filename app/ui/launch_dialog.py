@@ -7,8 +7,6 @@ from PyQt6.QtWidgets import (
 from app.core.instance import Instance
 from app.core.launcher import Launcher
 from app.core.save_parser import parse_save_header, compare_save_mods, SaveCompat
-from app.core.paths import settings_path
-from app.utils.file_utils import load_json
 from app.ui.detail.save_compat import COMPAT_ICON, COMPAT_COLOR, COMPAT_LABEL
 
 
@@ -203,9 +201,10 @@ class LaunchDialog(QDialog):
             self.instance.launch_args = extra
             self.instance.save()
 
-        settings    = load_json(settings_path(), {})
-        dr          = settings.get('data_root', '')
-        exe         = settings.get('rimworld_exe', '')
+        from app.core.app_settings import AppSettings
+        _s        = AppSettings.instance()
+        dr        = _s.data_root
+        exe       = _s.rimworld_exe
         onyx_mods   = Path(dr)  / 'mods' if dr  else None
         game_mods   = Path(exe).parent / 'Mods' if exe else None
 

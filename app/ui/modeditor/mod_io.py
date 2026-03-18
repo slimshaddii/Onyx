@@ -86,9 +86,10 @@ class ModIO:
         except Exception:
             pass   # history failure must never block a save
 
-        s   = load_json(settings_path(), {})
-        dr  = s.get('data_root', '')
-        exe = s.get('rimworld_exe', '')
+        from app.core.app_settings import AppSettings
+        _s  = AppSettings.instance()
+        dr  = _s.data_root
+        exe = _s.rimworld_exe
         if dr and exe:
             r = sync_instance_mods(
                 active_ids, self.all_mods,

@@ -7,8 +7,6 @@ from app.core.dep_resolver import (
     analyze_modlist, get_downloadable_deps, get_activatable_deps,
 )
 from app.core.steamcmd import DownloadQueue
-from app.core.paths import settings_path
-from app.utils.file_utils import load_json
 from app.ui.modeditor.issue_checker import check_load_order
 
 
@@ -75,9 +73,11 @@ class ModFixes:
 
     def _start_download(self, mods_to_download: list):
         from app.ui.modeditor.download_dialog import DownloadProgressDialog
-        s             = load_json(settings_path(), {})
-        steamcmd_path = s.get('steamcmd_path', '')
-        data_root     = s.get('data_root', '')
+        from app.core.app_settings import AppSettings
+        _s            = AppSettings.instance()
+        steamcmd_path = _s.steamcmd_path
+        data_root     = _s.data_root
+        username      = _s.steamcmd_username
 
         if not steamcmd_path or not Path(steamcmd_path).exists():
             QMessageBox.warning(self, "SteamCMD Not Configured",
@@ -91,7 +91,7 @@ class ModFixes:
             steamcmd_path=steamcmd_path,
             destination=str(Path(data_root) / 'mods'),
             max_concurrent=2,
-            username=s.get('steamcmd_username', ''))
+            username=username)              # ← fixed
         dlg = DownloadProgressDialog(self, queue, mods_to_download)
         dlg.downloads_complete.connect(self._on_downloads_complete)
         dlg.exec()
@@ -101,7 +101,8 @@ class ModFixes:
         bad = len(results) - ok
 
         if ok:
-            self.all_mods = self.rw.get_installed_mods(force_rescan=True)
+            self.all_mods = self.rw.get_installed_mods(force_rescan=True,
+                                                        max_age_seconds=0)
             self.names    = {pid: i.name for pid, i in self.all_mods.items()}
             issues        = analyze_modlist(
                 self.active.get_ids(), self.rw,
@@ -134,7 +135,7 @@ class ModFixes:
     def _show_fix_report(self, issues: list, activated: int,
                          dl_results: list):
         order    = self.active.get_ids()
-        _pos     = {m: i for i, m in enumerate(order)}   # build once
+        _pos     = {m: i for i, m in enumerate(order)}
 
         order_count = sum(
             len(check_load_order(mid, self.all_mods.get(mid),

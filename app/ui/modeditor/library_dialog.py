@@ -11,8 +11,6 @@ from PyQt6.QtCore import Qt
 
 from app.core.rimworld import RimWorldDetector, ModInfo
 from app.core.modlist import VANILLA_AND_DLCS
-from app.core.paths import settings_path
-from app.utils.file_utils import load_json
 
 
 class LibraryDialog(QDialog):
@@ -125,8 +123,6 @@ class LibraryDialog(QDialog):
         if self.selected_ids:
             self.accept()
 
-    # ── Context menu ──────────────────────────────────────────────────────────
-
     def _ctx_menu(self, pos):
         it = self.mod_list.itemAt(pos)
         if not it:
@@ -139,13 +135,11 @@ class LibraryDialog(QDialog):
         m = QMenu(self)
         m.addAction("Add to Instance", self._add)
 
-        # Delete — available for any mod with a real path on disk
         if info.path and info.path.exists():
             m.addSeparator()
             m.addAction("🗑 Delete mod files…",
                         lambda: self._delete_mod(mid))
 
-        # Redownload — only if the mod has a workshop ID
         if info.workshop_id:
             m.addAction("⟳ Redownload from Workshop",
                         lambda: self._redownload_mod(mid))
@@ -155,8 +149,6 @@ class LibraryDialog(QDialog):
                         lambda: open_workshop_page(info.workshop_id))
 
         m.exec(self.mod_list.mapToGlobal(pos))
-
-    # ── Delete ────────────────────────────────────────────────────────────────
 
     def _delete_mod(self, mid: str):
         info = self.all_mods.get(mid)
@@ -177,24 +169,22 @@ class LibraryDialog(QDialog):
 
         try:
             shutil.rmtree(str(info.path))
-            print(f"[Library] Deleted mod folder: {info.path}")
         except Exception as e:
             QMessageBox.critical(self, "Delete Failed", str(e))
             return
 
-        # Remove from list
         for i in range(self.mod_list.count()):
             if (self.mod_list.item(i) and
-                    self.mod_list.item(i).data(Qt.ItemDataRole.UserRole) == mid):
+                    self.mod_list.item(i).data(
+                        Qt.ItemDataRole.UserRole) == mid):
                 self.mod_list.takeItem(i)
                 break
 
-        # Remove from all_mods snapshot and rescan if rw available
         self.all_mods.pop(mid, None)
         if self.rw:
-            self.all_mods = self.rw.get_installed_mods(force_rescan=True)
+            self.all_mods = self.rw.get_installed_mods(force_rescan=True,
+                                                        max_age_seconds=0)
 
-        # Update count
         visible = sum(
             1 for i in range(self.mod_list.count())
             if not self.mod_list.item(i).isHidden())
@@ -202,8 +192,6 @@ class LibraryDialog(QDialog):
 
         QMessageBox.information(
             self, "Deleted", f"'{info.name}' was deleted.")
-
-    # ── Redownload ────────────────────────────────────────────────────────────
 
     def _redownload_mod(self, mid: str):
         info = self.all_mods.get(mid)
@@ -213,9 +201,10 @@ class LibraryDialog(QDialog):
                 "This mod has no Workshop ID — cannot redownload.")
             return
 
-        s             = load_json(settings_path(), {})
-        steamcmd_path = s.get('steamcmd_path', '')
-        data_root     = s.get('data_root', '')
+        from app.core.app_settings import AppSettings
+        _s            = AppSettings.instance()
+        steamcmd_path = _s.steamcmd_path
+        data_root     = _s.data_root
 
         if not steamcmd_path or not Path(steamcmd_path).exists():
             QMessageBox.warning(
@@ -233,7 +222,7 @@ class LibraryDialog(QDialog):
             steamcmd_path=steamcmd_path,
             destination=str(Path(data_root) / 'mods'),
             max_concurrent=1,
-            username=s.get('steamcmd_username', ''))
+            username=_s.steamcmd_username)          # ← fixed
 
         dlg = DownloadProgressDialog(
             self, queue, [(info.workshop_id, info.name)])
@@ -243,14 +232,14 @@ class LibraryDialog(QDialog):
         dlg.exec()
 
     def _on_redownload_done(self, results: list, mod_name: str):
-        ok  = sum(1 for _, s, _ in results if s)
+        ok = sum(1 for _, s, _ in results if s)
         if ok:
             QMessageBox.information(
                 self, "Redownload Complete",
                 f"'{mod_name}' was redownloaded successfully.")
-            # Rescan so the list reflects any changes
             if self.rw:
-                self.all_mods = self.rw.get_installed_mods(force_rescan=True)
+                self.all_mods = self.rw.get_installed_mods(force_rescan=True,
+                                                            max_age_seconds=0)
                 self._load()
         else:
             msg = results[0][2] if results else "Unknown error"

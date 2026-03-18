@@ -39,7 +39,7 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
         QDialog.__init__(self, parent)
         self.inst     = instance
         self.rw       = rw
-        self.all_mods = rw.get_installed_mods(force_rescan=True)
+        self.all_mods = rw.get_installed_mods(force_rescan=True, max_age_seconds=30.0)
         self.names    = {pid: info.name
                          for pid, info in self.all_mods.items()}
 
@@ -59,8 +59,8 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
     # ── Init helpers ──────────────────────────────────────────────────────────
 
     def _load_known_mod_ids(self) -> set[str]:
-        s = load_json(settings_path(), {})
-        data_root = s.get('data_root', '')
+        from app.core.app_settings import AppSettings
+        data_root = AppSettings.instance().data_root
         if not data_root:
             return set()
         try:
