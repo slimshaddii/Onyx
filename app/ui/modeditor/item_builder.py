@@ -10,11 +10,23 @@ from app.ui.modeditor.drag_list import COLOR_ROLE, TEXT_ROLE
 from app.ui.modeditor.issue_checker import get_badges, check_version
 
 # ── Color constants ───────────────────────────────────────────────────────────
-COLOR_ERROR   = '#ff4444'   # Red    — not on disk / hard error
-COLOR_WARNING = '#ffaa00'   # Yellow — version mismatch / dep not active
-COLOR_ORDER   = '#74d4cc'   # Teal   — load-order violation
-COLOR_NEW     = '#74d4cc'   # Teal   — newly added to this instance
-COLOR_NORMAL  = '#e0e0e0'   # White  — no issues
+# Must stay in sync with issue_checker.py's palette.
+COLOR_ERROR      = '#ff4444'   # Red    — not on disk / hard missing dep
+COLOR_DEPENDENCY = '#ff8800'   # Orange — dep not active (on disk)
+COLOR_WARNING    = '#ff8800'   # Orange — version mismatch (same visual tier)
+COLOR_ORDER      = '#ffaa00'   # Yellow — load-order violation
+COLOR_NEW        = '#74d4cc'   # Teal   — newly added to this instance
+COLOR_NORMAL     = '#e0e0e0'   # White  — no issues
+
+
+# ── Severity ranking used by _badge_color ─────────────────────────────────────
+# Lower number = higher priority = wins when multiple badges are present.
+_SEVERITY_RANK = {
+    'error':   0,   # red
+    'dep':     1,   # orange — dep on disk, not active
+    'warning': 2,   # orange — version mismatch
+    'order':   3,   # yellow — load-order violation
+}
 
 
 class ItemBuilder:
@@ -27,8 +39,8 @@ class ItemBuilder:
         self.names            — dict[str, str]
         self.active           — DragDropList
         self.avail            — DragDropList
-        self._original_mods   — set[str]  (mods already saved in this instance)
-        self._known_mod_ids   — set[str]  (mods used in any instance)
+        self._original_mods   — set[str]
+        self._known_mod_ids   — set[str]
     """
 
     # ── Internal helpers ──────────────────────────────────────────────────────
@@ -37,26 +49,32 @@ class ItemBuilder:
         return self.inst.rimworld_version or ''
 
     def _badge_color(self, badges: list) -> str:
-        """Return hex color for the highest-severity badge."""
+        """
+        Return the hex color for the highest-severity badge in the list.
+
+        Priority (low rank number wins):
+            0 error   → red    #ff4444
+            1 dep     → orange #ff8800
+            2 warning → orange #ff8800
+            3 order   → yellow #ffaa00
+        """
         if not badges:
             return COLOR_NORMAL
-        worst = min(badges,
-                    key=lambda b: {'error': 0, 'warning': 1, 'order': 2}.get(b[2], 3))
-        return worst[1]
+        worst = min(badges, key=lambda b: _SEVERITY_RANK.get(b[2], 99))
+        return worst[1]   # color stored in tuple position 1
 
     def _make_item(self, label: str, mid: str,
                    color: str, tooltip: str) -> QListWidgetItem:
         """
         Build a QListWidgetItem with three custom data roles:
-          UserRole  → mod package-id          (used by get_ids, drag-drop)
-          COLOR_ROLE → hex color string        (read by apply_item_widgets)
-          TEXT_ROLE  → display text            (read by filter_text + snapshot
-                                                after setText('') clears item.text())
+          UserRole   → mod package-id
+          COLOR_ROLE → hex color string  (read by apply_item_widgets)
+          TEXT_ROLE  → display text      (survives setText(''))
         """
         it = QListWidgetItem(label)
         it.setData(Qt.ItemDataRole.UserRole, mid)
         it.setData(COLOR_ROLE, color)
-        it.setData(TEXT_ROLE,  label)   # mirrors the label
+        it.setData(TEXT_ROLE,  label)
         it.setToolTip(tooltip)
         return it
 
@@ -67,10 +85,8 @@ class ItemBuilder:
         Append one mod to the active list.
 
         skip_badges=True  — fast path for batch loading.
-          Caller MUST call _refresh_badges() then active.apply_item_widgets().
-
-        skip_badges=False — computes badges inline; call apply_item_widgets()
-          on the list when convenient (e.g. after a single activation).
+            Caller MUST call _refresh_badges() then active.apply_item_widgets().
+        skip_badges=False — computes badges inline.
         """
         name   = self.names.get(mid, mid)
         is_new = mid not in self._original_mods
@@ -91,7 +107,6 @@ class ItemBuilder:
                                 self._game_version(), order)
 
         prefix = ''.join(b[0] for b in badges)
-        # Always prepend [NEW] when applicable, regardless of badge presence
         if is_new:
             prefix = f"[NEW] {prefix}" if prefix else "[NEW]"
 
@@ -127,12 +142,21 @@ class ItemBuilder:
     def _refresh_badges(self):
         """
         Recompute badges for every item in the active list in one pass.
-        Updates TEXT_ROLE and COLOR_ROLE.
-        Caller must invoke active.apply_item_widgets() afterwards to
-        push the changes into the visible QLabel widgets.
+
+        Color assignment per severity
+        ──────────────────────────────
+        error   → red    #ff4444   (not on disk, hard missing dep)
+        dep     → orange #ff8800   (dep on disk, not active)
+        warning → orange #ff8800   (version mismatch)
+        order   → yellow #ffaa00   (load-order violation)
+        new     → teal   #74d4cc   (newly added, no issues)
+        normal  → white  #e0e0e0   (no issues, not new)
+
+        Caller must invoke active.apply_item_widgets() afterwards.
         """
         order      = self.active.get_ids()
         active_ids = set(order)
+        _pos       = {m: i for i, m in enumerate(order)}
 
         for i in range(self.active.count()):
             it  = self.active.item(i)
@@ -143,12 +167,10 @@ class ItemBuilder:
             name   = self.names.get(mid, mid)
             is_new = mid not in self._original_mods
             badges = get_badges(mid, self.all_mods, active_ids,
-                                self._game_version(), order)
+                                self._game_version(), order, _pos)
 
             # ── Label ────────────────────────────────────────────────────────
             prefix = ''.join(b[0] for b in badges)
-            # FIX: was "if is_new and not badges" — dropped [NEW] when badges existed.
-            # Now always prepend [NEW] when is_new, regardless of badge count.
             if is_new:
                 prefix = f"[NEW] {prefix}" if prefix else "[NEW]"
 
@@ -160,20 +182,16 @@ class ItemBuilder:
             if not self.all_mods.get(mid):
                 color, tip = COLOR_ERROR, "Not on disk"
             elif badges:
-                color = self._badge_color(badges)
+                color = self._badge_color(badges)   # picks worst by _SEVERITY_RANK
                 tip   = '\n'.join(b[3] for b in badges)
             elif is_new:
                 color, tip = COLOR_NEW, "Newly added to this instance"
             else:
                 color, tip = COLOR_NORMAL, ''
 
-            # Write TEXT_ROLE first — apply_item_widgets reads this after
-            # setText('') has cleared item.text().
             it.setData(TEXT_ROLE,  label)
             it.setData(COLOR_ROLE, color)
             it.setToolTip(tip)
-            # Keep item.text() in sync so the narrow window between
-            # _refresh_badges and apply_item_widgets stays correct.
             it.setText(label)
 
     # ── Available list ────────────────────────────────────────────────────────
@@ -186,6 +204,7 @@ class ItemBuilder:
         is_new = mid not in self._known_mod_ids
 
         if not ver_ok:
+            # Version mismatch → orange (same tier as dep warning)
             prefix, color = '[!] ', COLOR_WARNING
             tip = f"Supports: {', '.join(info.supported_versions)}"
         elif is_new:
@@ -201,4 +220,4 @@ class ItemBuilder:
         """Append a placeholder for a mod that cannot be found on disk."""
         label = f"❌ {mid}  [not on disk]"
         tip   = "This mod is in the instance but not found on disk"
-        self.avail.addItem(self._make_item(label, mid, '#ff6b6b', tip))
+        self.avail.addItem(self._make_item(label, mid, COLOR_ERROR, tip))

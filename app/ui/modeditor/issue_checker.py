@@ -4,12 +4,12 @@ from app.core.rimworld import RimWorldDetector, ModInfo
 from app.core.dep_resolver import analyze_modlist, get_downloadable_deps, get_activatable_deps
 
 
-# Color palette for badges
-COLOR_ERROR = '#ff4444'      # Red for critical errors
-COLOR_WARNING = '#ffaa00'    # Yellow for warnings
-COLOR_DEPENDENCY = '#ff8800' # Orange for dependency issues
-COLOR_ORDER = '#74d4cc'      # Teal for load order issues
-COLOR_VERSION = '#ffaa00'    # Yellow for version mismatch
+# ── Color palette ─────────────────────────────────────────────────────────────
+COLOR_ERROR      = '#ff4444'   # Red    — not on disk / hard missing dep
+COLOR_DEPENDENCY = '#ff8800'   # Orange — dep not active (on disk), version mismatch
+COLOR_WARNING    = '#ff8800'   # Orange — alias kept so imports don't break
+COLOR_ORDER      = '#ffaa00'   # Yellow — load-order violation
+COLOR_VERSION    = '#ff8800'   # Orange — version mismatch
 
 
 def get_badges(mid: str, all_mods: dict[str, ModInfo], active_ids: set[str],
@@ -18,34 +18,51 @@ def get_badges(mid: str, all_mods: dict[str, ModInfo], active_ids: set[str],
                ) -> list[tuple[str, str, str, str]]:
     """
     Return (icon, color, severity, message) list for one mod.
-    active_order: ordered list of active mod IDs for load order checking.
+
+    Severity tags
+    -------------
+    'error'   — red:    not on disk, hard missing dep (not installed anywhere)
+    'dep'     — orange: dependency exists on disk but is not active
+    'warning' — orange: version mismatch
+    'order'   — yellow: load-order violation
     """
     badges = []
     info = all_mods.get(mid)
 
+    # ── Not on disk ───────────────────────────────────────────────────────────
     if not info:
         badges.append(('❌', COLOR_ERROR, 'error', 'Not found on disk'))
         return badges
 
-    # Missing dependencies
+    # ── Missing dependencies ──────────────────────────────────────────────────
     for dep in info.dependencies:
         if dep not in active_ids:
-            on_disk = dep in all_mods
-            dep_name = all_mods[dep].name if dep in all_mods else dep
+            on_disk  = dep in all_mods
+            dep_name = all_mods[dep].name if on_disk else dep
             if on_disk:
-                badges.append(('⚠', COLOR_DEPENDENCY, 'warning', f"Needs '{dep_name}' (not active)"))
+                # Dep exists locally but isn't in the active list → orange, 'dep'
+                badges.append((
+                    '⚠', COLOR_DEPENDENCY, 'dep',
+                    f"Needs '{dep_name}' (not active)",
+                ))
             else:
-                badges.append(('❌', COLOR_ERROR, 'error', f"Needs '{dep_name}' (NOT INSTALLED)"))
+                # Dep is completely absent from disk → red, 'error'
+                badges.append((
+                    '❌', COLOR_ERROR, 'error',
+                    f"Needs '{dep_name}' (NOT INSTALLED)",
+                ))
 
-    # Version mismatch
+    # ── Version mismatch ──────────────────────────────────────────────────────
     if not check_version(info, game_version):
-        badges.append(('🔶', COLOR_VERSION, 'warning',
-                       f"Version: {', '.join(info.supported_versions)}"))
+        badges.append((
+            '🔶', COLOR_VERSION, 'warning',
+            f"Version: {', '.join(info.supported_versions)}",
+        ))
 
-    # Load order violations
+    # ── Load-order violations ─────────────────────────────────────────────────
     if active_order:
-        _pos = {m: i for i, m in enumerate(active_order)}
-        order_issues = check_load_order(mid, info, active_order, all_mods, _pos_cache or _pos)
+        _pos        = _pos_cache or {m: i for i, m in enumerate(active_order)}
+        order_issues = check_load_order(mid, info, active_order, all_mods, _pos)
         badges.extend(order_issues or [])
 
     return badges
@@ -54,68 +71,80 @@ def get_badges(mid: str, all_mods: dict[str, ModInfo], active_ids: set[str],
 def check_load_order(mid: str, info: ModInfo, order: list[str],
                      all_mods: dict[str, ModInfo],
                      _pos_cache: dict | None = None) -> list[tuple[str, str, str, str]]:
-    """Check if mod is in correct position relative to loadAfter/loadBefore rules."""
-    badges = []
-    pos = _pos_cache if _pos_cache is not None else {m: i for i, m in enumerate(order)}
+    """
+    Check loadAfter / loadBefore rules.
+    Returns (icon, color, 'order', message) tuples — yellow.
+    """
+    badges  = []
+    pos     = _pos_cache if _pos_cache is not None else {m: i for i, m in enumerate(order)}
 
     if mid not in pos:
         return badges
 
-    my_idx = pos[mid]
+    my_idx     = pos[mid]
     active_set = set(pos.keys())
 
-    # loadAfter: dep should appear BEFORE us (dep_idx < my_idx is correct)
-    # Violation = dep appears AFTER us (dep_idx > my_idx)
+    # loadAfter: this mod must come AFTER dep → violation if dep is below us
     for dep in info.load_after:
         dep_l = dep.lower()
-        if dep_l in active_set:
-            dep_idx = pos[dep_l]
-            if dep_idx > my_idx:
-                dep_name = all_mods[dep_l].name if dep_l in all_mods else dep_l
-                badges.append(('🔃', COLOR_ORDER, 'order',
-                               f"Should load after '{dep_name}'"))
+        if dep_l in active_set and pos[dep_l] > my_idx:
+            dep_name = all_mods[dep_l].name if dep_l in all_mods else dep_l
+            badges.append((
+                '🔃', COLOR_ORDER, 'order',
+                f"Should load after '{dep_name}'",
+            ))
 
-    # loadBefore: dep should appear AFTER us (dep_idx > my_idx is correct)
-    # Violation = dep appears BEFORE us (dep_idx < my_idx)
+    # loadBefore: this mod must come BEFORE dep → violation if dep is above us
     for dep in info.load_before:
         dep_l = dep.lower()
-        if dep_l in active_set:
-            dep_idx = pos[dep_l]
-            if dep_idx < my_idx:
-                dep_name = all_mods[dep_l].name if dep_l in all_mods else dep_l
-                badges.append(('🔃', COLOR_ORDER, 'order',
-                               f"Should load before '{dep_name}'"))
+        if dep_l in active_set and pos[dep_l] < my_idx:
+            dep_name = all_mods[dep_l].name if dep_l in all_mods else dep_l
+            badges.append((
+                '🔃', COLOR_ORDER, 'order',
+                f"Should load before '{dep_name}'",
+            ))
 
-    return badges  # ← THIS WAS MISSING
+    return badges
 
 
 def check_version(info: ModInfo, game_version: str) -> bool:
+    """Return True when the mod declares support for the running game version."""
     if not info.supported_versions or not game_version:
         return True
     parts = game_version.split('.')[:2]
-    gv = '.'.join(parts) if len(parts) >= 2 else game_version
+    gv    = '.'.join(parts) if len(parts) >= 2 else game_version
     return gv in info.supported_versions
 
 
 def count_issues(mod_ids: list[str], all_mods: dict[str, ModInfo],
                  game_version: str) -> tuple[int, int, int]:
-    """Return (errors, warnings, order_issues)."""
-    active = set(mod_ids)
-    errors = warnings = order_issues = 0
-    _pos = {m: i for i, m in enumerate(mod_ids)}
+    """
+    Return (errors, warnings, order_issues).
+
+    - errors:       'error'   severity  (red)
+    - warnings:     'dep' OR 'warning'  (orange)
+    - order_issues: 'order'   severity  (yellow)
+    """
+    active      = set(mod_ids)
+    errors      = warnings = order_issues = 0
+    _pos        = {m: i for i, m in enumerate(mod_ids)}
+
     for mid in mod_ids:
         for badge in get_badges(mid, all_mods, active, game_version, mod_ids, _pos):
-            if badge[2] == 'order':
-                order_issues += 1
-            elif badge[2] == 'error':
+            sev = badge[2]
+            if sev == 'error':
                 errors += 1
-            elif badge[2] == 'warning':
+            elif sev in ('dep', 'warning'):   # both map to orange warnings bucket
                 warnings += 1
+            elif sev == 'order':
+                order_issues += 1
+
     return errors, warnings, order_issues
 
 
 def get_issue_mod_ids(mod_ids: list[str], all_mods: dict[str, ModInfo],
                       game_version: str) -> set[str]:
+    """Return the set of mod IDs that have at least one badge."""
     result = set()
     active = set(mod_ids)
     for mid in mod_ids:
@@ -124,7 +153,9 @@ def get_issue_mod_ids(mod_ids: list[str], all_mods: dict[str, ModInfo],
     return result
 
 
-def format_issue_text(errors: int, warnings: int, order: int, filtering: bool) -> str:
+def format_issue_text(errors: int, warnings: int, order: int,
+                      filtering: bool) -> str:
+    """Build the status-bar label text."""
     parts = []
     if errors:
         parts.append(f"❌ {errors}")
@@ -141,10 +172,15 @@ def format_issue_text(errors: int, warnings: int, order: int, filtering: bool) -
 
 
 def format_issue_color(errors: int, warnings: int, order: int) -> str:
+    """
+    Return the header-button color reflecting the worst active issue.
+
+    Priority: red > orange > yellow > green
+    """
     if errors:
-        return COLOR_ERROR
+        return COLOR_ERROR       # '#ff4444' red
     if warnings:
-        return COLOR_WARNING
+        return COLOR_DEPENDENCY  # '#ff8800' orange
     if order:
-        return COLOR_ORDER
-    return '#4CAF50'
+        return COLOR_ORDER       # '#ffaa00' yellow
+    return '#4CAF50'             # green — all clear
