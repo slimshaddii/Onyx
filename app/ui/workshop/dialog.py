@@ -195,7 +195,9 @@ class WorkshopBrowserDialog(QDialog):
         self.inst_lbl = QLabel(f"{len(self.installed_ids)} installed")
         self.inst_lbl.setStyleSheet("color:#4CAF50;font-size:10px;")
         lo.addWidget(self.inst_lbl)
-        lo.addWidget(QPushButton("Close", clicked=self.close))
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        lo.addWidget(close_btn)
         return w
 
     # ── Navigation ───────────────────────────────────────────────
@@ -257,14 +259,7 @@ class WorkshopBrowserDialog(QDialog):
             QMessageBox.warning(self, "SteamCMD", "SteamCMD not configured. Set path in Settings.")
             return
 
-        title = f"Item {mod_id}"
-        try:
-            det = fetch_details_sync([mod_id])
-            if det:
-                title = det[0].title
-        except Exception:
-            pass
-        self._dlq.enqueue(mod_id, title)
+        self._dlq.enqueue(mod_id, f"Item {mod_id}")
 
     def _on_started(self, wid, title):
         self.sidebar.add_download(wid, title)
@@ -274,13 +269,16 @@ class WorkshopBrowserDialog(QDialog):
         self.sidebar.update_progress(wid, pct)
 
     def _on_finished(self, wid, ok, msg):
+        # Use title already stored by _on_started rather than blocking network call
         title = wid
-        try:
-            det = fetch_details_sync([wid])
-            if det:
-                title = det[0].title
-        except Exception:
-            pass
+        for i in range(self.sidebar.dl_list.count()):
+            it = self.sidebar.dl_list.item(i)
+            if it and it.data(Qt.ItemDataRole.UserRole) == wid:
+                raw = it.text()
+                if raw.startswith(('⬇ ', '✅ ', '❌ ')):
+                    raw = raw[2:]
+                title = raw.split('—')[0].strip() if '—' in raw else raw.strip()
+                break
 
         self.sidebar.finish_download(wid, ok, title)
 
@@ -350,6 +348,12 @@ class WorkshopBrowserDialog(QDialog):
     # ── Cleanup ──────────────────────────────────────────────────
 
     def closeEvent(self, e):
+        try:
+            self._dlq.job_started.disconnect(self._on_started)
+            self._dlq.job_progress.disconnect(self._on_progress)
+            self._dlq.job_finished.disconnect(self._on_finished)
+        except Exception:
+            pass
         self._dlq.cancel_all()
         if self._browser:
             try:

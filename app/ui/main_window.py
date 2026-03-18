@@ -126,13 +126,14 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         tb.addAction(QAction("⟳ Refresh", self, triggered=self.refresh))
         s = QWidget()
-        s.setSizePolicy(s.sizePolicy().Policy.Expanding, s.sizePolicy().Policy.Preferred)
+        from PyQt6.QtWidgets import QSizePolicy
+        s.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(s)
         tb.addAction(QAction("⚙ Settings", self, triggered=self._on_settings))
 
     def _build_ui(self):
         c = QWidget()
-        c.setStyleSheet("background:#1b1b2a;")
+        c.setStyleSheet("background:#222222;")
         self.setCentralWidget(c)
         lo = QHBoxLayout(c)
         lo.setContentsMargins(0, 0, 0, 0)
@@ -177,8 +178,9 @@ class MainWindow(QMainWindow):
         self.gl = QLabel("")
         sb.addPermanentWidget(self.gl)
 
-    def refresh(self):
-        self.rw.get_installed_mods(self._all_mod_paths(), force_rescan=True)
+    def refresh(self, rescan_mods: bool = False):
+        if rescan_mods:
+            self.rw.get_installed_mods(self._all_mod_paths(), force_rescan=True)
         insts = self.im.scan_instances()
         self.grid.set_instances(insts)
         self.sl.setText(f"{len(insts)} instance{'s' if len(insts) != 1 else ''}")
@@ -219,10 +221,9 @@ class MainWindow(QMainWindow):
 
     def _on_edit_mods(self, inst):
         from app.ui.modeditor import ModEditorDialog
-        self.rw.get_installed_mods(self._all_mod_paths(), force_rescan=True)
         dlg = ModEditorDialog(self, inst, self.rw)
         if dlg.exec():
-            self.refresh()
+            self.refresh(rescan_mods=True)
             self.detail.set_instance(inst, self.rw)
 
     def _on_dup(self, inst):
@@ -297,8 +298,7 @@ class MainWindow(QMainWindow):
                 return
 
         from app.ui.workshop import WorkshopBrowserDialog
-        self.rw.get_installed_mods(self._all_mod_paths(), force_rescan=True)
-        installed = self.rw.get_installed_mods()
+        installed = self.rw.get_installed_mods(self._all_mod_paths(), force_rescan=True)
         ws_ids = {info.workshop_id for info in installed.values() if info.workshop_id}
         method = DownloadMethod(self.settings.get('download_method', 'steamcmd'))
 
@@ -410,6 +410,7 @@ class MainWindow(QMainWindow):
             self.gl.setText("")
 
     def closeEvent(self, e):
+        self._timer.stop()
         self.settings['window'] = {
             'width': self.width(), 'height': self.height(),
             'x': self.x(), 'y': self.y()}

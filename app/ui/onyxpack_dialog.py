@@ -58,7 +58,9 @@ class OnyxExportDialog(QDialog):
 
         btns = QHBoxLayout()
         btns.addStretch()
-        btns.addWidget(QPushButton("Cancel", clicked=self.reject))
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btns.addWidget(cancel_btn)
         exp = QPushButton("◆ Export .onyx")
         exp.setObjectName("primaryButton")
         exp.clicked.connect(self._export)
@@ -162,7 +164,9 @@ class OnyxImportDialog(QDialog):
 
         btns = QHBoxLayout()
         btns.addStretch()
-        btns.addWidget(QPushButton("Cancel", clicked=self.reject))
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btns.addWidget(cancel_btn)
         self.import_btn = QPushButton("◆ Import")
         self.import_btn.setObjectName("primaryButton")
         self.import_btn.clicked.connect(self._do_import)

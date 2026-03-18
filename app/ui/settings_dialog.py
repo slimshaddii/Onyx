@@ -225,4 +225,4 @@ class SettingsDialog(QDialog):
         self.accept()
 
     def get_settings(self) -> dict:
-        return self.s
+        return dict(self.s)

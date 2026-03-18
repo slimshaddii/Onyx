@@ -92,7 +92,7 @@ def analyze_modlist(mod_ids: list[str], rw: RimWorldDetector,
             gv_short = '.'.join(major_minor) if len(major_minor) >= 2 else game_version
             if gv_short not in info.supported_versions:
                 # Check if any version starts with the major
-                partial = any(gv_short.startswith(v.split('.')[0])
+                partial = any(v.startswith(gv_short.split('.')[0] + '.')
                               for v in info.supported_versions)
                 issues.append(ModIssue(
                     mod_id=mid, mod_name=info.name,

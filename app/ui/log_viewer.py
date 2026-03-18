@@ -157,16 +157,15 @@ class LogViewerDialog(QDialog):
         if entries is None:
             entries = self.log_parser.entries
 
+        self.log_view.setUpdatesEnabled(False)
         self.log_view.clear()
         cursor = self.log_view.textCursor()
 
         error_fmt = QTextCharFormat()
         error_fmt.setForeground(QColor("#f38ba8"))
         error_fmt.setFontWeight(QFont.Weight.Bold)
-
         warn_fmt = QTextCharFormat()
         warn_fmt.setForeground(QColor("#fab387"))
-
         info_fmt = QTextCharFormat()
         info_fmt.setForeground(QColor("#cdd6f4"))
 
@@ -177,11 +176,21 @@ class LogViewerDialog(QDialog):
                 cursor.setCharFormat(warn_fmt)
             else:
                 cursor.setCharFormat(info_fmt)
-
             cursor.insertText(f"[{entry.line_number:5d}] {entry.message}\n")
 
         self.log_view.setTextCursor(cursor)
+        self.log_view.setUpdatesEnabled(True)
         self.log_view.moveCursor(cursor.MoveOperation.Start)
+
+        errors = self.log_parser.get_error_count()
+        warnings = self.log_parser.get_warning_count()
+        total = len(self.log_parser.entries)
+        self.stats_label.setText(
+            f"Total: {total} lines | "
+            f"🔴 {errors} errors | "
+            f"🟡 {warnings} warnings | "
+            f"Showing: {len(entries)} lines"
+        )
 
         errors = self.log_parser.get_error_count()
         warnings = self.log_parser.get_warning_count()

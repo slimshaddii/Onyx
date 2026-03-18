@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QTextEdit, QGroupBox, QGridLayout, QDialog, QLineEdit,
     QFileDialog, QComboBox, QMessageBox, QScrollArea
 )
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtCore import pyqtSignal, Qt, QTimer
 from app.core.instance import Instance
 from app.core.instance_manager import InstanceManager
 from app.core.rimworld import RimWorldDetector
@@ -29,6 +29,10 @@ class InstanceDetailPanel(QWidget):
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
+        self._notes_timer = QTimer(self)
+        self._notes_timer.setSingleShot(True)
+        self._notes_timer.setInterval(800)
+        self._notes_timer.timeout.connect(self._do_save_notes)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -122,7 +126,7 @@ class InstanceDetailPanel(QWidget):
         self.notes_edit = QTextEdit()
         self.notes_edit.setMaximumHeight(90)
         self.notes_edit.setPlaceholderText("Instance notes...")
-        self.notes_edit.textChanged.connect(self._save_notes)
+        self.notes_edit.textChanged.connect(self._notes_timer.start)
         nl.addWidget(self.notes_edit)
         notes_group.setLayout(nl)
         self.cl.addWidget(notes_group)
@@ -156,7 +160,14 @@ class InstanceDetailPanel(QWidget):
         d['Inactive Mods'].setText(str(len(inst.inactive_mods)))
         d['Save Files'].setText(str(inst.save_count))
         try:
-            d['Instance Size'].setText(human_size(get_folder_size(inst.path)))
+            import threading
+            def _calc_size():
+                try:
+                    size = get_folder_size(inst.path)
+                    d['Instance Size'].setText(human_size(size))
+                except Exception:
+                    d['Instance Size'].setText('—')
+            threading.Thread(target=_calc_size, daemon=True).start()
         except Exception:
             d['Instance Size'].setText('—')
         d['Created'].setText(self._fmt_date(inst.created))
@@ -238,7 +249,7 @@ class InstanceDetailPanel(QWidget):
             else:
                 subprocess.Popen(['xdg-open', p])
 
-    def _save_notes(self):
+    def _do_save_notes(self):
         if self.current_instance:
             self.current_instance.notes = self.notes_edit.toPlainText()
             self.current_instance.save()

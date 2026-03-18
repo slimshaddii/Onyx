@@ -11,8 +11,9 @@ def excepthook(exc_type, exc_value, exc_tb):
     print(tb, file=sys.stderr)
     try:
         from PyQt6.QtWidgets import QApplication, QMessageBox
-        if QApplication.instance():
-            QMessageBox.critical(None, "Onyx — Fatal Error", tb)
+        app = QApplication.instance()
+        if app and not app.closingDown():
+            QMessageBox.critical(None, "Onyx — Fatal Error", tb[:2000])
     except Exception:
         pass
 
@@ -45,9 +46,13 @@ def main():
         print(f"[Onyx] QtWebEngine: NOT available — {e}")
 
     from PyQt6.QtWidgets import QApplication
-    from PyQt6.QtGui import QFont
+    from PyQt6.QtGui import QFont, QIcon
 
     app = QApplication(sys.argv)
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    icon_path = os.path.join(base_dir, 'app', 'ui', 'resources', 'onyx_icon.png')
+    app.setWindowIcon(QIcon(icon_path))
     app.setApplicationName("Onyx Launcher")
     app.setOrganizationName("Onyx")
     app.setStyle("Fusion")

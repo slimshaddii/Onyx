@@ -106,7 +106,9 @@ class LaunchDialog(QDialog):
 
         btns = QHBoxLayout()
         btns.addStretch()
-        btns.addWidget(QPushButton("Cancel", clicked=self.reject))
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btns.addWidget(cancel_btn)
         lb = QPushButton("▶ Launch")
         lb.setObjectName("primaryButton")
         lb.clicked.connect(self._launch)

@@ -52,12 +52,21 @@ def backup_folder(src: Path, backup_root: Path, max_backups: int = 3):
 
 def load_json(path: Path, default=None):
     if path.exists():
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return default if default is not None else {}
     return default if default is not None else {}
 
 
 def save_json(path: Path, data):
     ensure_dir(path.parent)
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    tmp = path.with_suffix(path.suffix + '.tmp')
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        tmp.replace(path)
+    except Exception as e:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"Failed to save {path.name}: {e}") from e

@@ -113,11 +113,15 @@ class LogParser:
 
         self.entries.clear()
         for i, line in enumerate(self.raw_text.splitlines(), 1):
-            level = 'INFO'
-            if 'error' in line.lower() or 'exception' in line.lower():
+            ll = line.lower()
+            if any(x in ll for x in ('exception:', ': error', '[error]', 'error:')):
                 level = 'ERROR'
-            elif 'warn' in line.lower():
+            elif 'exception' in ll and not 'no exception' in ll:
+                level = 'ERROR'
+            elif 'warn' in ll:
                 level = 'WARNING'
+            else:
+                level = 'INFO'
             self.entries.append(LogEntry(
                 level=level,
                 message=line,
@@ -137,14 +141,13 @@ class LogParser:
 
         # Default Unity log location
         import os
-        appdata = Path(os.environ.get('APPDATA', '')) / '..' / 'LocalLow'
-        default_log = appdata / 'Ludeon Studios' / 'RimWorld by Ludeon Studios' / 'Player.log'
-        if default_log.exists():
-            candidates.append(default_log.resolve())
-
-        default_prev = appdata / 'Ludeon Studios' / 'RimWorld by Ludeon Studios' / 'Player-prev.log'
-        if default_prev.exists():
-            candidates.append(default_prev.resolve())
+        local_low = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+        local_low = local_low.parent / 'LocalLow'
+        rw_log_dir = local_low / 'Ludeon Studios' / 'RimWorld by Ludeon Studios'
+        for log_name in ('Player.log', 'Player-prev.log'):
+            p = rw_log_dir / log_name
+            if p.exists():
+                candidates.append(p.resolve())
 
         if candidates:
             return max(candidates, key=lambda p: p.stat().st_mtime)

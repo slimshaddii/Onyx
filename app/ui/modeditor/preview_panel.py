@@ -79,8 +79,10 @@ class PreviewPanel(QWidget):
         if info.preview_image and Path(info.preview_image).exists():
             pm = QPixmap(info.preview_image)
             if not pm.isNull():
+                w = self.img.width()
+                target_w = w - 4 if w > 60 else 220
                 self.img.setPixmap(pm.scaled(
-                    max(self.img.width() - 4, 50), 94,
+                    target_w, 94,
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation))
                 return

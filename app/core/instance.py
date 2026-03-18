@@ -14,7 +14,7 @@ class Instance:
     inactive_mods: list[str] = field(default_factory=list)
     created: str = ''
     last_played: str = ''
-    rimworld_version: str = '1.6'
+    rimworld_version: str = '1.6.4630 rev467'
     notes: str = ''
     launch_args: list[str] = field(default_factory=list)
     icon_color: str = ''
@@ -44,7 +44,7 @@ class Instance:
                 group=d.get('group', ''),
                 total_playtime_minutes=d.get('total_playtime_minutes', 0),
             )
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError, OSError):
             return None
 
     def save(self):
@@ -63,8 +63,14 @@ class Instance:
             'group': self.group,
             'total_playtime_minutes': self.total_playtime_minutes,
         }
-        with open(self.path / 'instance.json', 'w', encoding='utf-8') as f:
-            json.dump(d, f, indent=2)
+        tmp = self.path / 'instance.json.tmp'
+        try:
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(d, f, indent=2)
+            tmp.replace(self.path / 'instance.json')
+        except Exception as e:
+            tmp.unlink(missing_ok=True)
+            raise RuntimeError(f"Failed to save instance '{self.name}': {e}") from e
 
     def duplicate(self, new_name: str, new_path: Optional[Path] = None) -> 'Instance':
         target = new_path or self.path.parent / new_name

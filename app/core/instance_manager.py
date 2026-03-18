@@ -7,6 +7,7 @@ from app.core.modlist import write_mods_config, read_mods_config, VANILLA_MODS, 
 from app.core.paths import get_default_rw_data
 from app.utils.file_utils import ensure_dir, safe_delete_tree
 
+DEFAULT_VERSION = '1.6.4630 rev467'
 
 class InstanceManager:
     def __init__(self, instances_root: Path):
@@ -105,7 +106,7 @@ class InstanceManager:
         inst = Instance(
             name=name, path=target, mods=mods,
             created=datetime.now().isoformat(),
-            rimworld_version=version or '1.6',
+            rimworld_version=version or DEFAULT_VERSION,
             notes='Imported from existing RimWorld data')
         inst.save()
         return inst

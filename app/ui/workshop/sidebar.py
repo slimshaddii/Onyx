@@ -76,8 +76,13 @@ class DownloadSidebar(QWidget):
             if it.data(Qt.ItemDataRole.UserRole) == wid:
                 it.setText(f"{'✅' if ok else '❌'} {title or wid}")
                 it.setForeground(QColor('#4CAF50' if ok else '#f44336'))
-                idx = i
-                QTimer.singleShot(5000, lambda: self._remove_dl(idx))
+                QTimer.singleShot(5000, lambda w=wid: self._remove_dl_by_id(w))
+                break
+
+    def _remove_dl_by_id(self, wid: str):
+        for i in range(self.dl_list.count()):
+            if self.dl_list.item(i).data(Qt.ItemDataRole.UserRole) == wid:
+                self.dl_list.takeItem(i)
                 break
 
     def _remove_dl(self, idx):

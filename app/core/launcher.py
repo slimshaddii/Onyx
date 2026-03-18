@@ -19,12 +19,25 @@ class LaunchResult:
 
 class Launcher:
     def __init__(self, rimworld_exe: str, auto_backup: bool = False,
-                 backup_count: int = 3):
-        self.rimworld_exe = rimworld_exe
-        self.auto_backup = auto_backup
-        self.backup_count = backup_count
-        self._current_process = None
-        self._launch_time: Optional[datetime] = None
+                    backup_count: int = 3):
+            self.rimworld_exe = rimworld_exe
+            self.auto_backup = auto_backup
+            self.backup_count = backup_count
+            self._current_process = None
+            self._launch_time: Optional[datetime] = None
+            self._recover_orphaned_config()
+
+    def _recover_orphaned_config(self):
+        from app.core.paths import get_default_rw_data
+        temp = get_default_rw_data() / '_onyx_temp_disabled'
+        real = get_default_rw_data() / 'Config'
+        if temp.exists() and not real.exists():
+            try:
+                import shutil
+                shutil.move(str(temp), str(real))
+                print("[Startup] Recovered orphaned config from previous crash")
+            except Exception as e:
+                print(f"[Startup] Could not recover orphaned config: {e}")
 
     def launch(self, instance: Instance, extra_args: Optional[list[str]] = None,
                log_to_instance: bool = True,
@@ -188,9 +201,9 @@ class Launcher:
             
             # Restore default config after delay
             if temp_disabled_config:
-                import time
-                time.sleep(3)
-                self._restore_default_config(default_config_dir, temp_disabled_config)
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(3000, lambda: self._restore_default_config(
+                    default_config_dir, temp_disabled_config))
             
             return LaunchResult(True, f"Launched '{instance.name}' (PID {process.pid})", process)
             

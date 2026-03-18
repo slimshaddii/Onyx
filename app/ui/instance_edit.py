@@ -58,7 +58,7 @@ class InstanceEditDialog(QDialog):
             'Created': self._fmt(self.inst.created),
             'Last Played': self._fmt(self.inst.last_played) or 'Never',
             'Playtime': f"{self.inst.total_playtime_minutes // 60}h {self.inst.total_playtime_minutes % 60}m",
-            'Size': human_size(get_folder_size(self.inst.path)),
+            'Size': '…',
         }
         for r, (k, v) in enumerate(fields.items()):
             ig.addWidget(QLabel(f"<b>{k}:</b>"), r, 0)
@@ -114,11 +114,12 @@ class InstanceEditDialog(QDialog):
         sv_lo.addWidget(self.saves_list)
 
         sv_btns = QHBoxLayout()
-        sv_btns.addWidget(QPushButton("📂 Open Saves Folder",
-                          clicked=lambda: self._open_path(self.inst.saves_dir)))
+        sv_open_btn = QPushButton("Open Saves Folder")
+        sv_open_btn.clicked.connect(lambda: self._open_path(self.inst.saves_dir))
+        sv_btns.addWidget(sv_open_btn)
         sv_btns.addStretch()
         sv_lo.addLayout(sv_btns)
-        tabs.addTab(saves_tab, "💾 Saves")
+        tabs.addTab(saves_tab, "Saves")
 
         # ── Notes tab ──
         notes_tab = QWidget()
@@ -127,7 +128,7 @@ class InstanceEditDialog(QDialog):
         self.notes_edit.setPlainText(self.inst.notes or '')
         self.notes_edit.setPlaceholderText("Write notes about this instance…")
         nt_lo.addWidget(self.notes_edit)
-        tabs.addTab(notes_tab, "📝 Notes")
+        tabs.addTab(notes_tab, "Notes")
 
         # ── Log tab ──
         log_tab = QWidget()
@@ -145,8 +146,8 @@ class InstanceEditDialog(QDialog):
                 lg_lo.addWidget(QLabel("Could not read log file."))
         else:
             lg_lo.addWidget(QLabel("No log file. Launch the game first."))
-        open_log_btn = QPushButton("📋 Open Full Log Viewer",
-                                   clicked=self._open_log_viewer)
+        open_log_btn = QPushButton("Open Full Log Viewer")
+        open_log_btn.clicked.connect(self._open_log_viewer)
         lg_lo.addWidget(open_log_btn)
         tabs.addTab(log_tab, "📋 Log")
 
@@ -164,12 +165,28 @@ class InstanceEditDialog(QDialog):
         st_lo.addStretch()
         tabs.addTab(set_tab, "⚙ Settings")
 
+        import threading
+        def _calc():
+            try:
+                size = human_size(get_folder_size(self.inst.path))
+                for r in range(ig.rowCount()):
+                    lbl = ig.itemAtPosition(r, 0)
+                    if lbl and lbl.widget() and 'Size' in lbl.widget().text():
+                        val_item = ig.itemAtPosition(r, 1)
+                        if val_item and val_item.widget():
+                            val_item.widget().setText(size)
+            except Exception:
+                pass
+        threading.Thread(target=_calc, daemon=True).start()
+
         lo.addWidget(tabs)
 
         # Bottom buttons
         btns = QHBoxLayout()
         btns.addStretch()
-        btns.addWidget(QPushButton("Cancel", clicked=self.reject))
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btns.addWidget(cancel_btn)
         save = QPushButton("Save")
         save.setObjectName("primaryButton")
         save.clicked.connect(self._save)
@@ -178,8 +195,7 @@ class InstanceEditDialog(QDialog):
 
     def _save(self):
         self.inst.notes = self.notes_edit.toPlainText()
-        args_text = self.args_edit.text().strip()
-        self.inst.launch_args = args_text.split() if args_text else []
+        self.inst.launch_args = self.args_edit.text().split()
         self.inst.save()
         self.instance_changed.emit()
         self.accept()

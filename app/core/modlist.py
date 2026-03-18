@@ -15,13 +15,6 @@ ALL_DLCS = [
 
 VANILLA_AND_DLCS = VANILLA_MODS + ALL_DLCS
 
-# Tier 0 mods MUST load before Core (Harmony, Prepatcher, etc.)
-TIER_ZERO_MODS = {
-    'brrainz.harmony',
-    'zetrith.prepatcher',
-    'ludeon.rimworld.prepatcher',
-}
-
 
 def read_mods_config(config_path: Path) -> tuple[list[str], str, list[str]]:
     """Returns (active_mods, version, known_expansions)."""
@@ -60,55 +53,32 @@ def write_mods_config(config_path: Path, mod_ids: list[str],
                       version: str = '1.5.4104 rev961',
                       known_expansions: Optional[list[str]] = None):
     """
-    Write ModsConfig.xml PRESERVING user order.
-    
-    Only ensures CRITICAL mods are in correct positions:
-    - Tier 0 mods (Harmony, Prepatcher) BEFORE Core
-    - Core exists
-    - DLCs after Core
-    
-    Everything else keeps user's exact order.
+    Write ModsConfig.xml PRESERVING THE EXACT ORDER provided.
+    Only ensures Core exists somewhere in the list.
     """
     config_path.mkdir(parents=True, exist_ok=True)
 
-    # Separate mods into tiers
-    tier_zero = []  # Harmony, Prepatcher - MUST be before Core
-    core_mod = None
-    dlc_mods = []
-    other_mods = []
-    
-    for mod_id in mod_ids:
-        mod_lower = mod_id.lower()
-        
-        if mod_lower in TIER_ZERO_MODS:
-            tier_zero.append(mod_id)
-        elif mod_lower == 'ludeon.rimworld':
-            core_mod = mod_id
-        elif mod_lower in [d.lower() for d in ALL_DLCS]:
-            dlc_mods.append(mod_id)
-        else:
-            other_mods.append(mod_id)
-    
-    # Ensure Core exists
-    if core_mod is None:
-        core_mod = 'ludeon.rimworld'
-        print("[ModsConfig] WARNING: Core was missing, adding")
-    
-    # Build final order:
-    # 1. Tier 0 (Harmony, etc.) - in user's order
-    # 2. Core
-    # 3. DLCs - in user's order
-    # 4. Everything else - in user's exact order
-    ordered_mods = tier_zero + [core_mod] + dlc_mods + other_mods
-    
-    # === Build XML ===
+    ordered_mods = list(mod_ids)
+
+    # Only ensure Core exists (don't move it)
+    has_core = any(m.lower() == 'ludeon.rimworld' for m in ordered_mods)
+    if not has_core:
+        insert_pos = 0
+        for i, m in enumerate(ordered_mods):
+            if m.lower().startswith('ludeon.rimworld.'):
+                insert_pos = i
+                break
+        ordered_mods.insert(insert_pos, 'ludeon.rimworld')
+        print("[ModsConfig] WARNING: Core was missing, inserted")
+
+    # Build XML
     lines = [
         '<?xml version="1.0" encoding="utf-8"?>',
         '<ModsConfigData>',
         f'  <version>{version}</version>',
         '  <activeMods>',
     ]
-    
+
     for mod_id in ordered_mods:
         safe_id = (mod_id
                    .replace('&', '&amp;')
@@ -116,17 +86,16 @@ def write_mods_config(config_path: Path, mod_ids: list[str],
                    .replace('>', '&gt;')
                    .replace('"', '&quot;'))
         lines.append(f'    <li>{safe_id}</li>')
-    
+
     lines.append('  </activeMods>')
 
-    # Auto-detect DLCs for knownExpansions
     if known_expansions is None:
         known_expansions = []
         for mod in ordered_mods:
             mod_lower = mod.lower()
             if mod_lower.startswith('ludeon.rimworld.') and mod_lower != 'ludeon.rimworld':
                 known_expansions.append(mod)
-    
+
     if known_expansions:
         lines.append('  <knownExpansions>')
         for exp in known_expansions:
@@ -139,21 +108,12 @@ def write_mods_config(config_path: Path, mod_ids: list[str],
         lines.append('  </knownExpansions>')
 
     lines.append('</ModsConfigData>')
-    
+
     xml_path = config_path / 'ModsConfig.xml'
     xml_path.write_text('\n'.join(lines), encoding='utf-8')
-    
-    print(f"[ModsConfig] Wrote {len(ordered_mods)} mods")
-    print(f"[ModsConfig] First 10: {ordered_mods[:10]}")
-    
-    # Verify critical order
-    if tier_zero:
-        print(f"[ModsConfig] ✓ Tier 0 mods before Core: {tier_zero}")
-    if ordered_mods[len(tier_zero)] == core_mod:
-        print(f"[ModsConfig] ✓ Core at position {len(tier_zero)}")
-    else:
-        print(f"[ModsConfig] ⚠ WARNING: Core not in expected position!")
-    
+
+    print(f"[ModsConfig] Wrote {len(ordered_mods)} mods (order preserved)")
+
     return xml_path
 
 

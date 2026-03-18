@@ -101,9 +101,9 @@ class InstanceGridPanel(QWidget):
         super().__init__(parent)
         self.instances: list[Instance] = []
         self._cards: list[InstanceCard] = []
+        self._selected_instance: Instance | None = None
         self._resize_timer = QTimer(self)
         self._resize_timer.setSingleShot(True)
-        self._resize_timer.setInterval(150)
         self._resize_timer.timeout.connect(self._rebuild)
         self._build()
 
@@ -174,12 +174,15 @@ class InstanceGridPanel(QWidget):
             card.clicked.connect(self._on_click)
             card.double_clicked.connect(self.instance_double_clicked.emit)
             card.context_requested.connect(self._show_context)
+            if self._selected_instance and inst is self._selected_instance:
+                card.set_selected(True)
             self.gl.addWidget(card, idx // cols, idx % cols)
             self._cards.append(card)
 
         self.cnt.setText(f"{len(filt)}/{len(self.instances)}")
 
     def _on_click(self, inst):
+        self._selected_instance = inst
         for c in self._cards:
             c.set_selected(c.instance is inst)
         self.instance_selected.emit(inst)
@@ -194,7 +197,7 @@ class InstanceGridPanel(QWidget):
         m.addSeparator()
         m.addAction("📁  Open Folder", lambda: self.folder_requested.emit(inst))
         m.addAction("📤  Export Modlist", lambda: self.export_requested.emit(inst))
-        m.addAction("📦  Export .rimpack", lambda: self.export_pack_requested.emit(inst))  # NEW
+        m.addAction("📦  Export .onyx", lambda: self.export_pack_requested.emit(inst))
         m.addAction("📋  Copy Instance", lambda: self.copy_requested.emit(inst))
         m.addSeparator()
         m.addAction("🗑  Delete", lambda: self.delete_requested.emit(inst))
@@ -241,4 +244,5 @@ class InstanceGridPanel(QWidget):
     def resizeEvent(self, e):
         super().resizeEvent(e)
         if self._cards:
-            self._resize_timer.start()
+        # Debounce: only rebuild 150ms after resize stops
+            self._resize_timer.start(150)
