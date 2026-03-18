@@ -110,18 +110,9 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
         lo.addLayout(self._build_bottom_bar())
 
     def _build_filter_row(self) -> QHBoxLayout:
-        """
-        Build the filter chips row.
-
-        Layout:
-            [Filter ▼]  [❌ 0]  [📦 0]  [⚠ 0]  [🔃 0]  [🐢 0]  [ℹ 0]
-        """
-        from app.ui.modeditor.issue_checker import SEVERITY_CONFIG
-
         row = QHBoxLayout()
         row.setSpacing(4)
 
-        # Master toggle button
         self.filter_btn = QPushButton("Filter ▼")
         self.filter_btn.setCheckable(True)
         self.filter_btn.setChecked(False)
@@ -133,26 +124,24 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
         self.filter_btn.clicked.connect(self._on_filter_toggle)
         row.addWidget(self.filter_btn)
 
-        # Category chip buttons
-        # Order: critical severity first, info last
         _chip_order = [
-            ('error',       '❌', '#ff4444'),
-            ('dep',         '📦', '#ff8800'),
-            ('warning',     '⚠',  '#ff8800'),
-            ('order',       '🔃', '#ffaa00'),
-            ('performance', '🐢', '#ffaa00'),
-            ('info',        'ℹ',  '#888888'),
+            ('error',       'ERR',   '#ff4444'),
+            ('dep',         'DEP',   '#ff8800'),
+            ('warning',     'WARN',  '#ff8800'),
+            ('order',       'ORDER', '#ffaa00'),
+            ('performance', 'PERF',  '#ffaa00'),
+            ('info',        'INFO',  '#888888'),
         ]
 
         self._chip_btns: dict[str, QPushButton] = {}
 
-        for cat, icon, color in _chip_order:
-            btn = QPushButton(f"{icon} 0")
+        for cat, label, color in _chip_order:
+            btn = QPushButton(f"{label}  0")
             btn.setCheckable(True)
             btn.setChecked(cat in self._filter_cats)
             btn.setFixedHeight(22)
-            btn.setProperty('cat', cat)
-            btn.setProperty('icon', icon)
+            btn.setProperty('cat',   cat)
+            btn.setProperty('label', label)
             btn.setProperty('color', color)
             btn.setToolTip(self._chip_tooltip(cat))
             btn.clicked.connect(
@@ -176,11 +165,10 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
 
     def _style_chip(self, btn: QPushButton, active: bool, count: int):
         """Apply visual style to a chip button based on active state and count."""
-        cat   = btn.property('cat')
-        icon  = btn.property('icon')
+        label = btn.property('label')
         color = btn.property('color')
 
-        btn.setText(f"{icon} {count}")
+        btn.setText(f"{label} {count}")
 
         if count == 0:
             # No issues of this type — always dim regardless of active state
@@ -212,7 +200,6 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
         self._apply_filter()
 
     def _on_chip_toggle(self, cat: str, checked: bool):
-        """Toggle one category chip."""
         if checked:
             self._filter_cats.add(cat)
         else:
@@ -220,14 +207,12 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
 
         btn = self._chip_btns.get(cat)
         if btn:
-            # Get current count from button text
             try:
                 count = int(btn.text().split()[-1])
             except (ValueError, IndexError):
                 count = 0
             self._style_chip(btn, checked, count)
 
-        # Re-apply filter if filter mode is on
         if self._filter_on:
             self._apply_filter()
 

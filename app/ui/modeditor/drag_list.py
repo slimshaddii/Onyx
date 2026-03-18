@@ -36,15 +36,6 @@ class DragDropList(QListWidget):
         self._change_timer.start()
 
     def apply_item_widgets(self):
-        """
-        Render each item as:
-            ● ModName  [package.id]          [NEW]
-            ↑ dot      ↑ clean name          ↑ pill (only if NEW_ROLE=True)
-
-        The dot color = COLOR_ROLE.
-        The name text = TEXT_ROLE (no issue icons — color carries the info).
-        The [NEW] pill = teal, shown only when NEW_ROLE is True.
-        """
         for i in range(self.count()):
             item = self.item(i)
             if item is None:
@@ -57,60 +48,70 @@ class DragDropList(QListWidget):
 
             existing = self.itemWidget(item)
             if isinstance(existing, QWidget) and existing.property('onyx_item'):
-                # Update existing widget in-place
                 dot  = existing.findChild(QLabel, 'dot')
                 name = existing.findChild(QLabel, 'name')
                 pill = existing.findChild(QLabel, 'pill')
                 if dot:
                     dot.setStyleSheet(
-                        f"color:{color_str}; background:transparent; "
-                        f"padding:0 3px 0 4px; font-size:10px;")
+                        f"color:{color_str}; background:transparent;")
                 if name:
                     name.setText(text)
                     name.setToolTip(tooltip)
                 if pill:
                     pill.setVisible(is_new)
             else:
-                # Build new item widget
+                # ── Container — must be transparent so QListWidget
+                #    selection/hover highlight shows through cleanly ──────────
                 container = QWidget()
                 container.setProperty('onyx_item', True)
+                # Transparent background — let QListWidget draw selection
+                container.setAttribute(
+                    Qt.WidgetAttribute.WA_TranslucentBackground, True)
                 container.setStyleSheet("background:transparent;")
-                container.setMinimumHeight(24)
-                row = QHBoxLayout(container)
-                row.setContentsMargins(2, 1, 4, 1)
-                row.setSpacing(4)
 
-                # Colored dot — severity indicator
+                row = QHBoxLayout(container)
+                row.setContentsMargins(4, 0, 6, 0)   # left/right padding only
+                row.setSpacing(6)
+                row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+                # ── Colored dot ───────────────────────────────────────────────
                 dot = QLabel("●")
                 dot.setObjectName('dot')
+                dot.setFixedWidth(14)
+                dot.setAlignment(
+                    Qt.AlignmentFlag.AlignCenter |
+                    Qt.AlignmentFlag.AlignVCenter)
                 dot.setStyleSheet(
                     f"color:{color_str}; background:transparent; "
-                    f"padding:0 3px 0 4px; font-size:10px;")
-                dot.setFixedWidth(16)
+                    f"font-size:9px;")
                 row.addWidget(dot)
 
-                # Mod name — clean, no issue icons
+                # ── Mod name ──────────────────────────────────────────────────
                 name_lbl = QLabel(text)
                 name_lbl.setObjectName('name')
+                name_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter)
                 name_lbl.setStyleSheet(
-                    "color:#e0e0e0; background:transparent; "
-                    "padding:2px 0;")
+                    "color:#e0e0e0; background:transparent;")
                 name_lbl.setToolTip(tooltip)
                 row.addWidget(name_lbl, 1)
 
-                # [NEW] pill — right-aligned teal badge
+                # ── [NEW] pill ────────────────────────────────────────────────
                 pill = QLabel("NEW")
                 pill.setObjectName('pill')
+                pill.setAlignment(Qt.AlignmentFlag.AlignVCenter)
                 pill.setStyleSheet(
                     "color:#1a1a1a; background:#74d4cc; "
-                    "border-radius:3px; padding:1px 5px; "
-                    "font-size:9px; font-weight:bold;")
+                    "border-radius:3px; padding:0px 4px; "
+                    "font-size:8px; font-weight:bold;")
                 pill.setVisible(is_new)
                 row.addWidget(pill)
 
                 self.setItemWidget(item, container)
 
-            # Clear item's built-in text to prevent double-render
+                # Set item height to match container
+                item.setSizeHint(container.sizeHint().expandedTo(
+                    __import__('PyQt6.QtCore', fromlist=['QSize']).QSize(0, 26)))
+
             item.setText('')
 
     def _snapshot_items(self) -> list[dict]:

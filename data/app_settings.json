@@ -11,9 +11,9 @@
   "is_steam_copy": false,
   "window": {
     "width": 1348,
-    "height": 820,
-    "x": 238,
-    "y": 60
+    "height": 764,
+    "x": 299,
+    "y": 108
   },
   "auto_backup_on_launch": true,
   "backup_count": 3,
