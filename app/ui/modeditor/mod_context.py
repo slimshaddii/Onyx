@@ -2,16 +2,21 @@
 
 import shutil
 from pathlib import Path
-from PyQt6.QtWidgets import QMenu, QMessageBox
-from PyQt6.QtCore import Qt
 
-from app.core.steamcmd import DownloadQueue
+from PyQt6.QtWidgets import QMenu, QMessageBox  # pylint: disable=no-name-in-module
+from PyQt6.QtCore import Qt  # pylint: disable=no-name-in-module
+
+from app.core.app_settings import AppSettings
+from app.core.mod_linker import delete_mod_permanently
 from app.core.modlist import VANILLA_AND_DLCS
+from app.core.steam_integration import open_workshop_page
+from app.core.steamcmd import DownloadQueue
+from app.ui.modeditor.issue_checker import get_badges, make_error_key
 
 
 class ModContext:
-    """
-    Mixin for ModEditorDialog.
+    """Mixin for ModEditorDialog.
+
     Requires: self.active, self.avail, self.inst, self.rw,
               self.all_mods, self.names,
               self._rem_sel(), self._add_sel(),
@@ -21,6 +26,8 @@ class ModContext:
               self._update_empty_hint(),
               self.avail.apply_item_widgets()
     """
+
+    # pylint: disable=no-member,attribute-defined-outside-init
 
     def _ctx_active(self, pos):
         it = self.active.itemAt(pos)
@@ -37,12 +44,13 @@ class ModContext:
         else:
             rem.triggered.connect(self._rem_sel)
 
-        if info and info.dependencies:
+        dependencies = getattr(info, 'dependencies', []) if info else []
+        if dependencies:
             active_set = set(self.active.get_ids())
             ignored    = self._ignored_deps_set()
 
             ignorable = [
-                dep for dep in info.dependencies
+                dep for dep in dependencies
                 if dep not in active_set
                 and f"{mid}:{dep}" not in ignored
             ]
@@ -57,7 +65,7 @@ class ModContext:
                         lambda dk=dep_key: self._ignore_dep(dk))
 
             already_ignored = [
-                dep for dep in info.dependencies
+                dep for dep in dependencies
                 if f"{mid}:{dep}" in ignored
             ]
             if already_ignored:
@@ -69,6 +77,43 @@ class ModContext:
                         f"Restore '{dep_name}'",
                         lambda dk=dep_key: self._restore_dep(dk))
 
+        if info:
+            order      = self.active.get_ids()
+            active_ids = set(order)
+            all_badges = get_badges(
+                mid, self.all_mods, active_ids,
+                self.inst.rimworld_version or '', order,
+                ignored_deps=self._ignored_deps_set(),
+                ignored_errors=set())
+
+            ignored_errs = self._ignored_errors_set()
+
+            ignorable_errs = [
+                b for b in all_badges
+                if make_error_key(mid, b[2], b[3]) not in ignored_errs
+            ]
+            already_ignored_errs = [
+                b for b in all_badges
+                if make_error_key(mid, b[2], b[3]) in ignored_errs
+            ]
+
+            if ignorable_errs:
+                m.addSeparator()
+                ign_menu = m.addMenu("Ignore error/warning…")
+                for b in ignorable_errs:
+                    key   = make_error_key(mid, b[2], b[3])
+                    label = f"{b[0]} {b[3][:60]}"
+                    ign_menu.addAction(label,
+                                       lambda k=key: self._ignore_error(k))
+
+            if already_ignored_errs:
+                rst_menu = m.addMenu("Restore suppressed error/warning…")
+                for b in already_ignored_errs:
+                    key   = make_error_key(mid, b[2], b[3])
+                    label = f"{b[0]} {b[3][:60]}"
+                    rst_menu.addAction(label,
+                                       lambda k=key: self._restore_error(k))
+
         if (info and info.path and info.path.exists()
                 and mid not in VANILLA_AND_DLCS):
             m.addSeparator()
@@ -78,11 +123,26 @@ class ModContext:
         if info and info.workshop_id:
             m.addAction("⟳ Redownload from Workshop",
                         lambda: self._redownload_mod(mid))
-            from app.core.steam_integration import open_workshop_page
             m.addAction("Workshop page",
                         lambda: open_workshop_page(info.workshop_id))
 
         m.exec(self.active.mapToGlobal(pos))
+
+    def _ignore_error(self, error_key: str):
+        if error_key not in self.inst.ignored_errors:
+            self.inst.ignored_errors.append(error_key)
+            self.inst.save()
+        self._refresh_badges()
+        self.active.apply_item_widgets()
+        self._update()
+
+    def _restore_error(self, error_key: str):
+        if error_key in self.inst.ignored_errors:
+            self.inst.ignored_errors.remove(error_key)
+            self.inst.save()
+        self._refresh_badges()
+        self.active.apply_item_widgets()
+        self._update()
 
     def _ctx_avail(self, pos):
         it = self.avail.itemAt(pos)
@@ -114,7 +174,6 @@ class ModContext:
         if info and info.workshop_id:
             m.addAction("⟳ Redownload from Workshop",
                         lambda: self._redownload_mod(mid))
-            from app.core.steam_integration import open_workshop_page
             m.addAction("Workshop page",
                         lambda: open_workshop_page(info.workshop_id))
 
@@ -153,8 +212,6 @@ class ModContext:
                     lst.takeItem(i)
                     break
 
-        from app.core.app_settings import AppSettings
-        from app.core.mod_linker import delete_mod_permanently
         _s = AppSettings.instance()
 
         workshop_id   = info.workshop_id or info.path.name
@@ -176,7 +233,7 @@ class ModContext:
         else:
             try:
                 shutil.rmtree(str(mod_path))
-            except Exception as e:
+            except OSError as e:
                 QMessageBox.critical(self, "Delete Failed", str(e))
                 return
 
@@ -184,8 +241,8 @@ class ModContext:
                 extra_mod_paths=self._extra_mod_paths(),
                 force_rescan=True,
                 max_age_seconds=0)
-        self.names    = {pid: i.name for pid, i in self.all_mods.items()}
 
+        self.names = {pid: i.name for pid, i in self.all_mods.items()}
         self.avail.apply_item_widgets()
         self._update_empty_hint()
         self._update()
@@ -199,7 +256,6 @@ class ModContext:
                 "This mod has no Workshop ID — cannot redownload.")
             return
 
-        from app.core.app_settings import AppSettings
         _s            = AppSettings.instance()
         steamcmd_path = _s.steamcmd_path
         data_root     = _s.data_root
@@ -213,8 +269,7 @@ class ModContext:
             QMessageBox.warning(self, "Error", "Data root not configured.")
             return
 
-        from app.core.steamcmd import DownloadQueue
-        from app.ui.modeditor.download_manager import DownloadManagerWindow
+        from app.ui.modeditor.download_manager import DownloadManagerWindow  # pylint: disable=import-outside-toplevel
         queue = DownloadQueue(
             steamcmd_path=steamcmd_path,
             destination=str(Path(data_root) / 'mods'),
@@ -225,8 +280,8 @@ class ModContext:
         queue.queue_empty.connect(
             lambda: self._on_redownload_done_mgr(info.name, queue))
 
-    def _on_redownload_done_mgr(self, mod_name: str, queue):
-        """Called when redownload completes via download manager."""
+    def _on_redownload_done_mgr(self, _mod_name: str, _queue):
+        """Refresh mod data after a redownload completes via download manager."""
         self.all_mods = self.rw.get_installed_mods(
             extra_mod_paths=self._extra_mod_paths(),
             force_rescan=True,
@@ -250,3 +305,5 @@ class ModContext:
         self._refresh_badges()
         self.active.apply_item_widgets()
         self._update()
+
+    # pylint: enable=no-member,attribute-defined-outside-init

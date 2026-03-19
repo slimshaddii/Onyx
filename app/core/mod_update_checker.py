@@ -5,20 +5,30 @@ Timestamps stored in data_root/mod_timestamps.json.
 """
 
 import json
+import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-from dataclasses import dataclass, field
+
+import requests
+
+_STEAM_FILE_DETAILS_URL = (
+    'https://api.steampowered.com/'
+    'ISteamRemoteStorage/GetPublishedFileDetails/v1/'
+)
 
 
 @dataclass
 class ModUpdateInfo:
-    workshop_id:    str
-    name:           str
-    local_time:     int   # unix timestamp of local version
-    remote_time:    int   # unix timestamp from Steam API
-    has_update:     bool  # remote_time > local_time
-    mod_path:       str = ''
+    """Update status for a single Workshop mod."""
+
+    workshop_id: str
+    name:        str
+    local_time:  int   # unix timestamp of local version
+    remote_time: int   # unix timestamp from Steam API
+    has_update:  bool  # True when remote_time > local_time > 0
+    mod_path:    str = ''
 
 
 class ModTimestampStore:
@@ -32,29 +42,30 @@ class ModTimestampStore:
         self._data: dict[str, int] = {}
         self._load()
 
-    def _load(self):
+    def _load(self) -> None:
         if self._path.exists():
             try:
                 self._data = json.loads(
                     self._path.read_text(encoding='utf-8'))
-            except Exception:
+            except (json.JSONDecodeError, OSError):
                 self._data = {}
 
-    def _save(self):
+    def _save(self) -> None:
         try:
             self._path.write_text(
-                json.dumps(self._data, indent=2),
-                encoding='utf-8')
-        except Exception:
+                json.dumps(self._data, indent=2), encoding='utf-8')
+        except OSError:
             pass
 
-    def record(self, workshop_id: str, timestamp: Optional[int] = None):
+    def record(self, workshop_id: str,
+               timestamp: Optional[int] = None) -> None:
         """Record download time for a mod. Uses current time if not specified."""
         self._data[workshop_id] = timestamp or int(time.time())
         self._save()
 
     def record_batch(self, workshop_ids: list[str],
-                     timestamp: Optional[int] = None):
+                     timestamp: Optional[int] = None) -> None:
+        """Record the same timestamp for multiple workshop IDs at once."""
         ts = timestamp or int(time.time())
         for wid in workshop_ids:
             self._data[wid] = ts
@@ -65,54 +76,38 @@ class ModTimestampStore:
         return self._data.get(workshop_id, 0)
 
     def get_all(self) -> dict[str, int]:
+        """Return a copy of all stored workshop_id → timestamp mappings."""
         return dict(self._data)
 
-    def remove(self, workshop_id: str):
+    def remove(self, workshop_id: str) -> None:
+        """Remove the stored timestamp for a workshop ID."""
         self._data.pop(workshop_id, None)
         self._save()
 
 
 def check_updates(
-    workshop_ids: list[str],
+    workshop_ids:    list[str],
     timestamp_store: ModTimestampStore,
-    mod_names: Optional[dict[str, str]] = None,
-    mod_paths: Optional[dict[str, str]] = None,
+    mod_names:       Optional[dict[str, str]] = None,
+    mod_paths:       Optional[dict[str, str]] = None,
 ) -> list[ModUpdateInfo]:
     """
     Check Steam Workshop for updates to the given workshop IDs.
-    Returns list of ModUpdateInfo, one per mod checked.
-    Mods not in timestamp_store use mtime of mod_path as fallback.
 
+    Returns one ModUpdateInfo per mod checked. Mods not in timestamp_store
+    use the mtime of mod_path as a fallback local timestamp.
     Batches requests in groups of 50 (Steam API limit).
     """
-    import requests
-
-    mod_names = mod_names or {}
-    mod_paths = mod_paths or {}
-
     if not workshop_ids:
         return []
 
-    url = ('https://api.steampowered.com/'
-           'ISteamRemoteStorage/GetPublishedFileDetails/v1/')
-
-    results: list[ModUpdateInfo] = []
+    mod_names = mod_names or {}
+    mod_paths = mod_paths or {}
+    results:  list[ModUpdateInfo] = []
 
     for start in range(0, len(workshop_ids), 50):
-        chunk = workshop_ids[start:start + 50]
-        post_data = {'itemcount': len(chunk)}
-        for i, wid in enumerate(chunk):
-            post_data[f'publishedfileids[{i}]'] = wid
-
-        try:
-            resp = requests.post(url, data=post_data, timeout=15)
-            resp.raise_for_status()
-            details = (resp.json()
-                       .get('response', {})
-                       .get('publishedfiledetails', []))
-        except Exception:
-            # Network failure — skip this chunk
-            continue
+        chunk   = workshop_ids[start:start + 50]
+        details = _fetch_published_file_details(chunk)
 
         for d in details:
             wid         = str(d.get('publishedfileid', ''))
@@ -122,15 +117,7 @@ def check_updates(
 
             remote_time = int(d.get('time_updated', 0))
             name        = d.get('title') or mod_names.get(wid, wid)
-
-            # Local timestamp: stored record first, then file mtime fallback
-            local_time = timestamp_store.get(wid)
-            if local_time == 0 and wid in mod_paths:
-                try:
-                    import os
-                    local_time = int(os.path.getmtime(mod_paths[wid]))
-                except Exception:
-                    local_time = 0
+            local_time  = _get_local_time(wid, timestamp_store, mod_paths)
 
             results.append(ModUpdateInfo(
                 workshop_id=wid,
@@ -144,41 +131,72 @@ def check_updates(
     return results
 
 
-def get_workshop_file_sizes(
-    workshop_ids: list[str],
-) -> dict[str, int]:
+def get_workshop_file_sizes(workshop_ids: list[str]) -> dict[str, int]:
     """
     Fetch file sizes for workshop IDs from Steam API.
-    Returns {workshop_id: size_bytes}.
-    Used by download manager for speed/ETA calculation.
-    """
-    import requests
 
+    Returns {workshop_id: size_bytes}.
+    Used by the download manager for speed/ETA calculation.
+    Batches requests in groups of 50 (Steam API limit).
+    """
     if not workshop_ids:
         return {}
 
-    url = ('https://api.steampowered.com/'
-           'ISteamRemoteStorage/GetPublishedFileDetails/v1/')
     sizes: dict[str, int] = {}
 
     for start in range(0, len(workshop_ids), 50):
-        chunk = workshop_ids[start:start + 50]
-        post_data = {'itemcount': len(chunk)}
-        for i, wid in enumerate(chunk):
-            post_data[f'publishedfileids[{i}]'] = wid
+        chunk   = workshop_ids[start:start + 50]
+        details = _fetch_published_file_details(chunk)
 
-        try:
-            resp = requests.post(url, data=post_data, timeout=15)
-            resp.raise_for_status()
-            details = (resp.json()
-                       .get('response', {})
-                       .get('publishedfiledetails', []))
-            for d in details:
-                wid  = str(d.get('publishedfileid', ''))
-                size = int(d.get('file_size', 0))
-                if wid and size:
-                    sizes[wid] = size
-        except Exception:
-            continue
+        for d in details:
+            wid  = str(d.get('publishedfileid', ''))
+            size = int(d.get('file_size', 0))
+            if wid and size:
+                sizes[wid] = size
 
     return sizes
+
+
+def _build_post_data(chunk: list[str]) -> dict:
+    """Build the POST body for a Steam GetPublishedFileDetails request."""
+    data: dict = {'itemcount': len(chunk)}
+    for i, wid in enumerate(chunk):
+        data[f'publishedfileids[{i}]'] = wid
+    return data
+
+
+def _fetch_published_file_details(chunk: list[str]) -> list[dict]:
+    """
+    POST one chunk of workshop IDs to the Steam API.
+
+    Returns the publishedfiledetails list, or [] on any network or parse error.
+    """
+    try:
+        resp = requests.post(
+            _STEAM_FILE_DETAILS_URL,
+            data=_build_post_data(chunk),
+            timeout=15)
+        resp.raise_for_status()
+        return (resp.json()
+                .get('response', {})
+                .get('publishedfiledetails', []))
+    except (requests.RequestException, json.JSONDecodeError, ValueError):
+        return []
+
+
+def _get_local_time(wid: str,
+                    timestamp_store: ModTimestampStore,
+                    mod_paths: dict[str, str]) -> int:
+    """
+    Return the local timestamp for a workshop mod.
+
+    Uses the stored record first; falls back to the mtime of the mod folder
+    if the store has no record and a path is available.
+    """
+    local_time = timestamp_store.get(wid)
+    if local_time == 0 and wid in mod_paths:
+        try:
+            local_time = int(os.path.getmtime(mod_paths[wid]))
+        except OSError:
+            local_time = 0
+    return local_time

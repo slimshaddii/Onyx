@@ -1,15 +1,22 @@
-from pathlib import Path
-from PyQt6.QtWidgets import (
+"""Settings dialog for configuring Onyx Launcher preferences."""
+
+import platform
+import webbrowser
+
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QGroupBox, QGridLayout, QFileDialog,
-    QCheckBox, QSpinBox, QListWidget, QMessageBox, QComboBox, QTextEdit
+    QCheckBox, QSpinBox, QListWidget, QComboBox, QTextEdit,
 )
+
+from app.core.app_settings import AppSettings
 from app.core.auto_detect import auto_detect_all
 from app.core.paths import get_default_data_root
-import webbrowser
 
 
 class SettingsDialog(QDialog):
+    """Dialog for editing Onyx Launcher configuration settings."""
+
     def __init__(self, parent, settings: dict):
         super().__init__(parent)
         self.s = dict(settings)
@@ -22,7 +29,6 @@ class SettingsDialog(QDialog):
         lo = QVBoxLayout(self)
         lo.setSpacing(8)
 
-        # Auto-detect
         dr = QHBoxLayout()
         db = QPushButton("🔍 Auto-Detect")
         db.setObjectName("primaryButton")
@@ -31,7 +37,6 @@ class SettingsDialog(QDialog):
         dr.addStretch()
         lo.addLayout(dr)
 
-        # Paths
         g1 = QGroupBox("Paths")
         gl = QGridLayout()
         gl.setVerticalSpacing(6)
@@ -56,7 +61,6 @@ class SettingsDialog(QDialog):
         g1.setLayout(gl)
         lo.addWidget(g1)
 
-        # Downloads
         g2 = QGroupBox("Workshop Downloads")
         g2l = QGridLayout()
         g2l.setVerticalSpacing(6)
@@ -90,13 +94,13 @@ class SettingsDialog(QDialog):
         g2l.addWidget(self.api, 4, 1)
         qb = QPushButton("?")
         qb.setFixedWidth(28)
-        qb.clicked.connect(lambda: webbrowser.open("https://steamcommunity.com/dev/apikey"))
+        qb.clicked.connect(
+            lambda: webbrowser.open("https://steamcommunity.com/dev/apikey"))
         g2l.addWidget(qb, 4, 2)
 
         g2.setLayout(g2l)
         lo.addWidget(g2)
 
-        # Extra mod paths
         g3 = QGroupBox("Extra Mod Folders")
         g3l = QVBoxLayout()
         self.paths_list = QListWidget()
@@ -107,15 +111,15 @@ class SettingsDialog(QDialog):
         ab.clicked.connect(self._add_path)
         pr.addWidget(ab)
         rb = QPushButton("Remove")
-        rb.clicked.connect(lambda: self.paths_list.takeItem(self.paths_list.currentRow())
-                           if self.paths_list.currentRow() >= 0 else None)
+        rb.clicked.connect(
+            lambda: self.paths_list.takeItem(self.paths_list.currentRow())
+            if self.paths_list.currentRow() >= 0 else None)
         pr.addWidget(rb)
         pr.addStretch()
         g3l.addLayout(pr)
         g3.setLayout(g3l)
         lo.addWidget(g3)
 
-        # Backups
         g4 = QGroupBox("Backups")
         g4l = QHBoxLayout()
         self.bk = QCheckBox("Auto-backup before launch")
@@ -128,7 +132,6 @@ class SettingsDialog(QDialog):
         g4.setLayout(g4l)
         lo.addWidget(g4)
 
-        # Cosmetics
         g5 = QGroupBox("Appearance")
         g5l = QHBoxLayout()
         g5l.addWidget(QLabel("Theme:"))
@@ -146,14 +149,12 @@ class SettingsDialog(QDialog):
         g5.setLayout(g5l)
         lo.addWidget(g5)
 
-        # Detect log
         self.det_log = QTextEdit()
         self.det_log.setReadOnly(True)
         self.det_log.setMaximumHeight(80)
         self.det_log.hide()
         lo.addWidget(self.det_log)
 
-        # Buttons
         btns = QHBoxLayout()
         btns.addStretch()
         btns.addWidget(self._btn("Cancel", self.reject))
@@ -177,7 +178,6 @@ class SettingsDialog(QDialog):
         return b
 
     def _browse_file(self, t):
-        import platform
         if platform.system() == 'Windows':
             filt = "Exe (*.exe);;All Files (*)"
         else:
@@ -206,14 +206,13 @@ class SettingsDialog(QDialog):
         self.bk.setChecked(self.s.get('auto_backup_on_launch', True))
         self.bk_n.setValue(self.s.get('backup_count', 3))
         self.copy_cb.setCurrentIndex(1 if self.s.get('is_steam_copy') else 0)
-        self.method.setCurrentIndex(1 if self.s.get('download_method') == 'steam_native' else 0)
+        self.method.setCurrentIndex(
+            1 if self.s.get('download_method') == 'steam_native' else 0)
         for p in self.s.get('extra_mod_paths', []):
             self.paths_list.addItem(p)
-        from app.core.app_settings import AppSettings
         mode = AppSettings.instance().update_check_mode
         idx  = self.update_cb.findData(mode)
         self.update_cb.setCurrentIndex(max(0, idx))
-
 
     def _detect(self):
         self.det_log.show()
@@ -235,23 +234,27 @@ class SettingsDialog(QDialog):
             for p in r.extra_mod_paths:
                 if p not in existing:
                     self.paths_list.addItem(p)
-        self.det_log.append("\n✅ Done" if r.found_rimworld else "\n⚠ RimWorld not found")
+        self.det_log.append(
+            "\n✅ Done" if r.found_rimworld else "\n⚠ RimWorld not found")
 
     def _save(self):
-        self.s['rimworld_exe'] = self.exe.text().strip()
-        self.s['data_root'] = self.data.text().strip() or str(get_default_data_root())
-        self.s['steamcmd_path'] = self.cmd.text().strip()
-        self.s['steamcmd_username'] = self.cmd_user.text().strip()
+        self.s['rimworld_exe']        = self.exe.text().strip()
+        self.s['data_root']           = (self.data.text().strip()
+                                         or str(get_default_data_root()))
+        self.s['steamcmd_path']       = self.cmd.text().strip()
+        self.s['steamcmd_username']   = self.cmd_user.text().strip()
         self.s['steam_workshop_path'] = self.ws.text().strip()
-        self.s['steam_api_key'] = self.api.text().strip()
+        self.s['steam_api_key']       = self.api.text().strip()
         self.s['auto_backup_on_launch'] = self.bk.isChecked()
-        self.s['backup_count'] = self.bk_n.value()
-        self.s['is_steam_copy'] = self.copy_cb.currentIndex() == 1
-        self.s['download_method'] = self.method.currentData()
-        self.s['extra_mod_paths'] = [
-            self.paths_list.item(i).text() for i in range(self.paths_list.count())]
-        self.s['update_check_mode'] = self.update_cb.currentData()
+        self.s['backup_count']        = self.bk_n.value()
+        self.s['is_steam_copy']       = self.copy_cb.currentIndex() == 1
+        self.s['download_method']     = self.method.currentData()
+        self.s['extra_mod_paths']     = [
+            self.paths_list.item(i).text()
+            for i in range(self.paths_list.count())]
+        self.s['update_check_mode']   = self.update_cb.currentData()
         self.accept()
 
     def get_settings(self) -> dict:
+        """Return a copy of the current settings dict."""
         return dict(self.s)

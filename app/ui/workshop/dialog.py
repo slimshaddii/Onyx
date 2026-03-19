@@ -1,26 +1,30 @@
 """Main workshop browser dialog."""
 
-import re
 import json
+import re
 from pathlib import Path
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
-    QLabel, QMessageBox, QWidget, QComboBox, QApplication
-)
-from PyQt6.QtCore import Qt, QUrl, QTimer
-from PyQt6.QtGui import QFont
 
-from app.core.steamcmd import SteamCMDManager, DownloadQueue
-from app.core.workshop import fetch_details_sync
-from app.core.steam_integration import DownloadMethod, subscribe_via_steam, open_workshop_page
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
+    QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
+    QLabel, QMessageBox, QWidget, QComboBox, QApplication, QInputDialog,
+)
+from PyQt6.QtCore import Qt, QUrl, QTimer  # pylint: disable=no-name-in-module
+
+from app.core.app_settings import AppSettings
 from app.core.mod_linker import link_mod_to_game, delete_downloaded_mod
 from app.core.rimworld import ModInfo
-
+from app.core.steam_integration import (
+    DownloadMethod, subscribe_via_steam, open_workshop_page,
+)
+from app.core.steamcmd import SteamCMDManager, DownloadQueue
+from app.ui.styles import get_colors
 from app.ui.workshop.js_inject import INJECT_JS
 from app.ui.workshop.web_page import HAS_WE, WE_ERROR
 
 if HAS_WE:
-    from app.ui.workshop.web_page import OnyxPage, QWebEngineView, QWebEngineProfile, QWebEngineSettings
+    from app.ui.workshop.web_page import (
+        OnyxPage, QWebEngineView, QWebEngineProfile, QWebEngineSettings,
+    )
 
 WORKSHOP_BROWSE = (
     "https://steamcommunity.com/workshop/browse/?appid=294100"
@@ -29,30 +33,37 @@ WORKSHOP_HOME = "https://steamcommunity.com/app/294100/workshop/"
 
 
 class WorkshopBrowserDialog(QDialog):
-    def __init__(self, parent, steamcmd: SteamCMDManager, rw=None,
-                 api_key='', installed_workshop_ids=None,
+    """Steam Workshop browser with optional WebEngine integration."""
+
+    def __init__(self, _parent, steamcmd: SteamCMDManager, rw=None,
+                 _api_key='', installed_workshop_ids=None,
                  download_method=DownloadMethod.STEAMCMD,
-                 is_steam_copy=False, settings=None):
+                 _is_steam_copy=False, settings=None):
         super().__init__(None)
-        self.steamcmd = steamcmd
-        self.rw = rw
-        self.installed_ids = set(installed_workshop_ids or set())
+        self.steamcmd        = steamcmd
+        self.rw              = rw
+        self.installed_ids   = set(installed_workshop_ids or set())
         self.download_method = download_method
-        self._settings = settings or {}
-        self._browser = None
-        self._inject_ver = 0
+        self._settings       = settings or {}
+        self._browser        = None
+        self._inject_ver     = 0
+
+        self.addr:       QLineEdit | None = None
+        self.method_cb:  QComboBox | None = None
+        self.status_lbl: QLabel    | None = None
+        self.inst_lbl:   QLabel    | None = None
 
         self._dlq = DownloadQueue(
             steamcmd_path=steamcmd.steamcmd_path,
             destination=steamcmd.mods_destination,
             max_concurrent=3,
             username=self._settings.get('steamcmd_username', ''))
-        from app.ui.modeditor.download_manager import DownloadManagerWindow
+
+        from app.ui.modeditor.download_manager import DownloadManagerWindow  # pylint: disable=import-outside-toplevel
         self._dl_manager_window = DownloadManagerWindow(self._dlq, self)
         self._dlq.job_started.connect(self._on_started)
         self._dlq.job_progress.connect(self._on_progress)
         self._dlq.job_finished.connect(self._on_finished)
-
 
         self.setWindowTitle("Steam Workshop — Onyx")
         self.setMinimumSize(1000, 560)
@@ -66,13 +77,11 @@ class WorkshopBrowserDialog(QDialog):
         if can:
             try:
                 self._build_with_browser()
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 print(f"[Workshop] WebEngine failed: {e}")
                 can = False
         if not can:
             self._build_fallback()
-
-    # ── Build ────────────────────────────────────────────────────
 
     def _build_fallback(self):
         lo = QVBoxLayout(self)
@@ -104,6 +113,7 @@ class WorkshopBrowserDialog(QDialog):
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
 
+        # pylint: disable=possibly-used-before-assignment
         profile = QWebEngineProfile.defaultProfile()
         s = profile.settings()
         s.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
@@ -113,8 +123,10 @@ class WorkshopBrowserDialog(QDialog):
         self._page.onyx_download.connect(self._download)
 
         self._browser = QWebEngineView(self)
+        # pylint: enable=possibly-used-before-assignment
         self._browser.setPage(self._page)
-        self._browser.loadStarted.connect(lambda: self.status_lbl.setText("Loading…"))
+        self._browser.loadStarted.connect(
+            lambda: self.status_lbl.setText("Loading…"))
         self._browser.loadFinished.connect(self._on_loaded)
         self._browser.urlChanged.connect(self._on_url)
         body.addWidget(self._browser, 1)
@@ -125,11 +137,7 @@ class WorkshopBrowserDialog(QDialog):
         lo.addWidget(self._make_status())
         self._browser.load(QUrl(WORKSHOP_BROWSE))
 
-    # ── Nav bar ──────────────────────────────────────────────────
-
     def _make_nav(self) -> QWidget:
-        from app.core.app_settings import AppSettings
-        from app.ui.styles import get_colors
         c = get_colors(AppSettings.instance().theme)
         w = QWidget()
         w.setStyleSheet(
@@ -141,8 +149,8 @@ class WorkshopBrowserDialog(QDialog):
 
         if HAS_WE:
             for text, tip, fn in [
-                ("Back", "Go back", lambda: self._browser and self._browser.back()),
-                ("Fwd", "Go forward", lambda: self._browser and self._browser.forward()),
+                ("Back",   "Go back",     lambda: self._browser and self._browser.back()),
+                ("Fwd",    "Go forward",  lambda: self._browser and self._browser.forward()),
                 ("Reload", "Reload page", lambda: self._browser and self._browser.reload()),
             ]:
                 b = QPushButton(text)
@@ -171,7 +179,6 @@ class WorkshopBrowserDialog(QDialog):
         go.clicked.connect(self._navigate)
         lo.addWidget(go)
 
-        
         dl_mgr_btn = QPushButton("Downloads")
         dl_mgr_btn.setFixedHeight(26)
         dl_mgr_btn.setStyleSheet("font-size:10px;padding:2px 8px;")
@@ -210,8 +217,6 @@ class WorkshopBrowserDialog(QDialog):
         return w
 
     def _make_status(self) -> QWidget:
-        from app.core.app_settings import AppSettings
-        from app.ui.styles import get_colors
         c = get_colors(AppSettings.instance().theme)
         w = QWidget()
         w.setStyleSheet(
@@ -231,13 +236,10 @@ class WorkshopBrowserDialog(QDialog):
         update_btn = QPushButton("Check Updates")
         update_btn.clicked.connect(self._open_update_checker)
         lo.addWidget(update_btn)
-
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
         lo.addWidget(close_btn)
         return w
-
-    # ── Navigation ───────────────────────────────────────────────
 
     def _go_home(self):
         if self._browser:
@@ -268,8 +270,6 @@ class WorkshopBrowserDialog(QDialog):
                 f"?appid=294100&searchtext={t}"
                 f"&browsesort=trend&section=readytouseitems"))
 
-    # ── Page events ──────────────────────────────────────────────
-
     def _on_loaded(self, ok):
         self.status_lbl.setText("Ready" if ok else "Failed")
         if ok:
@@ -286,45 +286,43 @@ class WorkshopBrowserDialog(QDialog):
         if not self._browser or not self._browser.page():
             return
         self._inject_ver += 1
-        js = INJECT_JS.replace('__INSTALLED_IDS__', json.dumps(list(self.installed_ids)))
+        js = INJECT_JS.replace(
+            '__INSTALLED_IDS__', json.dumps(list(self.installed_ids)))
         js = js.replace('__VERSION__', str(self._inject_ver))
         self._browser.page().runJavaScript(js)
-
-    # ── Download ─────────────────────────────────────────────────
 
     def _download(self, mod_id: str):
         if self.method_cb.currentData() == 'steam_native':
             if subscribe_via_steam(mod_id):
-                QMessageBox.information(self, "Steam", f"Opened {mod_id} in Steam.")
+                QMessageBox.information(
+                    self, "Steam", f"Opened {mod_id} in Steam.")
             else:
                 open_workshop_page(mod_id)
             return
 
         if not self._dlq.is_configured:
-            QMessageBox.warning(self, "SteamCMD", "SteamCMD not configured. Set path in Settings.")
+            QMessageBox.warning(
+                self, "SteamCMD",
+                "SteamCMD not configured. Set path in Settings.")
             return
 
         self._dlq.enqueue(mod_id, f"Item {mod_id}")
 
     def _open_download_manager(self):
         """Open the persistent download manager window."""
-        from app.ui.modeditor.download_manager import DownloadManagerWindow
+        from app.ui.modeditor.download_manager import DownloadManagerWindow  # pylint: disable=import-outside-toplevel
         if not hasattr(self, '_dl_manager_window'):
-            self._dl_manager_window = DownloadManagerWindow(
-                self._dlq, self)
+            self._dl_manager_window = DownloadManagerWindow(self._dlq, self)
         self._dl_manager_window.show()
         self._dl_manager_window.raise_()
         self._dl_manager_window.activateWindow()
 
     def _open_library(self):
         """Open the mod library browser."""
-        from app.ui.mod_library_dialog import ModLibraryDialog
-        from pathlib import Path
+        from app.ui.mod_library_dialog import ModLibraryDialog  # pylint: disable=import-outside-toplevel
         dr = self._settings.get('data_root', '')
         if not dr:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "Library",
-                                "Data root not configured.")
+            QMessageBox.warning(self, "Library", "Data root not configured.")
             return
         dlg = ModLibraryDialog(
             self,
@@ -333,8 +331,8 @@ class WorkshopBrowserDialog(QDialog):
         dlg.exec()
 
     def _open_update_checker(self):
-        from app.ui.mod_update_dialog import ModUpdateDialog
-        from pathlib import Path
+        """Open the mod update checker dialog."""
+        from app.ui.mod_update_dialog import ModUpdateDialog  # pylint: disable=import-outside-toplevel
         dr = self._settings.get('data_root', '')
         if not dr:
             QMessageBox.warning(self, "Check Updates",
@@ -353,7 +351,6 @@ class WorkshopBrowserDialog(QDialog):
         elif t.isdigit():
             coll_id = t
         else:
-            from PyQt6.QtWidgets import QInputDialog
             coll_id, ok = QInputDialog.getText(
                 self, "Collection ID",
                 "Enter Steam Workshop collection ID or URL:")
@@ -419,12 +416,11 @@ class WorkshopBrowserDialog(QDialog):
 
     @staticmethod
     def _fetch_collection(collection_id: str) -> tuple[list[str], str]:
+        """Fetch mod IDs from a Steam Workshop collection.
+
+        Returns (mod_id_list, error_string). No API key required.
         """
-        Fetch mod IDs from a Steam Workshop collection.
-        Returns (mod_id_list, error_string).
-        No API key required for this endpoint.
-        """
-        import requests as _requests
+        import requests as _requests  # pylint: disable=import-outside-toplevel
 
         url = ("https://api.steampowered.com/"
                "ISteamRemoteStorage/GetCollectionDetails/v1/")
@@ -435,7 +431,7 @@ class WorkshopBrowserDialog(QDialog):
             }, timeout=15)
             resp.raise_for_status()
             raw = resp.json()
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             return [], f"Network error: {e}"
 
         try:
@@ -469,7 +465,7 @@ class WorkshopBrowserDialog(QDialog):
             sub_ids, _ = WorkshopBrowserDialog._fetch_collection(nested_id)
             mod_ids.extend(sub_ids)
 
-        seen: set[str] = set()
+        seen:   set[str]  = set()
         unique: list[str] = []
         for mid in mod_ids:
             if mid not in seen:
@@ -478,13 +474,12 @@ class WorkshopBrowserDialog(QDialog):
 
         return unique, ""
 
-    def _on_started(self, wid, title):
+    def _on_started(self, _wid, title):
         self.status_lbl.setText(f"Downloading: {title}")
-        # Show download manager automatically when download begins
         self._dl_manager_window.show()
         self._dl_manager_window.raise_()
 
-    def _on_progress(self, wid, pct):
+    def _on_progress(self, _wid, _pct):
         pass
 
     def _on_finished(self, wid, ok, msg):
@@ -514,7 +509,7 @@ class WorkshopBrowserDialog(QDialog):
             self.status_lbl.setText(f"Failed: {msg[:40]}")
 
     def _link_mod(self, wid):
-        dr = self._settings.get('data_root', '')
+        dr  = self._settings.get('data_root', '')
         exe = self._settings.get('rimworld_exe', '')
         if not dr or not exe:
             return
@@ -526,29 +521,29 @@ class WorkshopBrowserDialog(QDialog):
             if not ok:
                 print(f"[ModLink] FAILED for {wid}: {method}")
 
-    # ── Mod management ───────────────────────────────────────────
-
     def _refresh_sidebar(self):
         pass
 
     def _handle_delete(self, wid, action):
-        dr = self._settings.get('data_root', '')
+        dr  = self._settings.get('data_root', '')
         exe = self._settings.get('rimworld_exe', '')
         if not dr:
             return
 
         mod_folder = Path(dr) / 'mods' / wid
-        game_mods = Path(exe).parent / 'Mods' if exe else Path()
+        game_mods  = Path(exe).parent / 'Mods' if exe else Path()
 
         if action == "delete":
             name = wid
             info = ModInfo.from_path(mod_folder, 'workshop')
             if info:
                 name = info.name
-            if QMessageBox.question(self, "Delete",
-                f"Delete '{name}' from Onyx and game?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No
+            if QMessageBox.question(
+                    self, "Delete",
+                    f"Delete '{name}' from Onyx and game?",
+                    QMessageBox.StandardButton.Yes |
+                    QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
             ) != QMessageBox.StandardButton.Yes:
                 return
             delete_downloaded_mod(mod_folder, game_mods)
@@ -563,19 +558,18 @@ class WorkshopBrowserDialog(QDialog):
             self._inject()
             self._download(wid)
 
-    # ── Cleanup ──────────────────────────────────────────────────
-
-    def closeEvent(self, e):
+    def closeEvent(self, e):  # pylint: disable=invalid-name
+        """Clean up signal connections and browser on close."""
         try:
             self._dlq.job_started.disconnect(self._on_started)
             self._dlq.job_progress.disconnect(self._on_progress)
             self._dlq.job_finished.disconnect(self._on_finished)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass
         self._dlq.cancel_all()
         if self._browser:
             try:
                 self._browser.setPage(None)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 pass
         super().closeEvent(e)

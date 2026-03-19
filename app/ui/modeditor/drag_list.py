@@ -1,9 +1,6 @@
 """
 Drag-and-drop mod list — QListView + QAbstractListModel + QStyledItemDelegate.
 
-Phase 9.1: Replaces QListWidget for RimSort-level performance.
-Phase 9.4: Delegate only paints visible items — lazy badge rendering.
-
 External API is backward-compatible with the old QListWidget-based version:
     addItem(item)          — append a ModItem
     clear()                — remove all items
@@ -14,7 +11,7 @@ External API is backward-compatible with the old QListWidget-based version:
     itemAt(pos)            — ModItem under QPoint pos (or None)
     selectedItems()        — list of selected ModItems
     get_ids()              — ordered list of package_ids
-    apply_item_widgets()   — trigger repaint (no-op label approach gone)
+    apply_item_widgets()   — trigger repaint
     filter_text(q)         — show/hide by text search
     filter_by_ids(ids)     — show/hide by mod id set
     set_partner(other)     — set cross-list drag partner
@@ -22,35 +19,33 @@ External API is backward-compatible with the old QListWidget-based version:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import (
+from PyQt6.QtCore import (  # pylint: disable=no-name-in-module
     Qt, QAbstractListModel, QModelIndex, QMimeData,
     QSize, QRect, QPoint, pyqtSignal, QTimer,
 )
-from PyQt6.QtGui import (
-    QPainter, QColor, QFontMetrics, QPalette,
+from PyQt6.QtGui import (  # pylint: disable=no-name-in-module
+    QPainter, QColor, QFontMetrics,
 )
-from PyQt6.QtWidgets import (
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QListView, QStyledItemDelegate, QStyleOptionViewItem,
-    QAbstractItemView, QApplication, QStyle,
+    QAbstractItemView, QStyle,
 )
 
-# ── Custom data roles ─────────────────────────────────────────────────────────
+from app.core.app_settings import AppSettings
+from app.ui.styles import get_colors
+
 COLOR_ROLE = Qt.ItemDataRole.UserRole + 10
 TEXT_ROLE  = Qt.ItemDataRole.UserRole + 11
 NEW_ROLE   = Qt.ItemDataRole.UserRole + 12
-MID_ROLE   = Qt.ItemDataRole.UserRole        # package_id
+MID_ROLE   = Qt.ItemDataRole.UserRole
 
 
-# ── Data container ────────────────────────────────────────────────────────────
-
-class ModItem:
+class ModItem:  # pylint: disable=invalid-name
     """
-    Replaces QListWidgetItem. Stores all display data for one mod row.
-    Exposed to callers via item(i), selectedItems(), takeItem(i), etc.
+    Data container for one mod row. Replaces QListWidgetItem.
+    Exposed via item(i), selectedItems(), takeItem(i), etc.
     """
 
     def __init__(self, text: str = '', mid: str = '',
@@ -63,9 +58,8 @@ class ModItem:
         self.is_new  = is_new
         self.hidden  = False
 
-    # ── QListWidgetItem-compatible data API ───────────────────────────────────
-
     def data(self, role: int):
+        """Return display data for the given Qt item role."""
         if role == MID_ROLE:
             return self.mid
         if role == COLOR_ROLE:
@@ -80,7 +74,8 @@ class ModItem:
             return self.tooltip
         return None
 
-    def setData(self, role: int, value):
+    def setData(self, role: int, value):  # noqa: N802
+        """Set display data for the given Qt item role."""
         if role == MID_ROLE:
             self.mid = value or ''
         elif role == COLOR_ROLE:
@@ -92,127 +87,126 @@ class ModItem:
         elif role == Qt.ItemDataRole.ToolTipRole:
             self.tooltip = value or ''
 
-    def toolTip(self) -> str:
+    def toolTip(self) -> str:  # noqa: N802
+        """Return the tooltip string."""
         return self.tooltip
 
-    def setText(self, text: str):
-        # QListWidgetItem compat — we store text in TEXT_ROLE
-        # Callers do setText('') to clear built-in text; we ignore that.
+    def setText(self, text: str):  # noqa: N802
+        """Set the display text (ignores empty strings for compat)."""
         if text:
             self.text = text
 
-    def setToolTip(self, tip: str):
+    def setToolTip(self, tip: str):  # noqa: N802
+        """Set the tooltip string."""
         self.tooltip = tip
 
-    def setHidden(self, hidden: bool):
+    def setHidden(self, hidden: bool):  # noqa: N802
+        """Show or hide this item."""
         self.hidden = hidden
 
-    def isHidden(self) -> bool:
+    def isHidden(self) -> bool:  # noqa: N802
+        """Return True if this item is hidden."""
         return self.hidden
 
 
-# ── Model ─────────────────────────────────────────────────────────────────────
-
-class ModListModel(QAbstractListModel):
-    """
-    Stores ModItems in a list. Supports drag/drop reordering via
-    Qt's built-in MIME drag mechanism.
-    """
+class ModListModel(QAbstractListModel):  # pylint: disable=invalid-name
+    """Stores ModItems. Supports drag/drop reordering via MIME data."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._items: list[ModItem] = []
 
-    # ── QAbstractListModel interface ──────────────────────────────────────────
-
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def rowCount(self, _parent: QModelIndex = QModelIndex()) -> int:  # pylint: disable=invalid-name
+        """Return the number of items in the model."""
         return len(self._items)
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
-        if not index.isValid() or not (0 <= index.row() < len(self._items)):
+    def data(self, index: QModelIndex,
+             role: int = Qt.ItemDataRole.DisplayRole):
+        """Return item data for the given index and role."""
+        if not index.isValid() or not 0 <= index.row() < len(self._items):
             return None
-        item = self._items[index.row()]
-        return item.data(role)
+        return self._items[index.row()].data(role)
 
-    def setData(self, index: QModelIndex, value,
+    def setData(self, index: QModelIndex, value,  # pylint: disable=invalid-name
                 role: int = Qt.ItemDataRole.EditRole) -> bool:
-        if not index.isValid() or not (0 <= index.row() < len(self._items)):
+        """Set item data for the given index and role."""
+        if not index.isValid() or not 0 <= index.row() < len(self._items):
             return False
         self._items[index.row()].setData(role, value)
         self.dataChanged.emit(index, index, [role])
         return True
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        """Return item flags (enabled, selectable, draggable, droppable)."""
         base = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         if index.isValid():
             base |= (Qt.ItemFlag.ItemIsDragEnabled |
                      Qt.ItemFlag.ItemIsDropEnabled)
         return base
 
-    def supportedDropActions(self) -> Qt.DropAction:
+    def supportedDropActions(self) -> Qt.DropAction:  # pylint: disable=invalid-name
+        """Return supported drop actions (MoveAction only)."""
         return Qt.DropAction.MoveAction
 
-    def mimeTypes(self) -> list[str]:
+    def mimeTypes(self) -> list[str]:  # pylint: disable=invalid-name
+        """Return accepted MIME types for drag/drop."""
         return ['application/x-onyx-mod-row']
 
-    def mimeData(self, indexes: list[QModelIndex]) -> QMimeData:
+    def mimeData(self, indexes: list[QModelIndex]) -> QMimeData:  # pylint: disable=invalid-name
+        """Encode selected row indices into MIME data."""
         mime = QMimeData()
         rows = sorted({i.row() for i in indexes if i.isValid()})
         mime.setData('application/x-onyx-mod-row',
                      ','.join(str(r) for r in rows).encode())
         return mime
 
-    def dropMimeData(self, data: QMimeData, action: Qt.DropAction,
-                     row: int, column: int,
-                     parent: QModelIndex) -> bool:
+    def dropMimeData(self, data: QMimeData, action: Qt.DropAction,  # pylint: disable=invalid-name
+                     row: int, _column: int,
+                     _parent: QModelIndex) -> bool:
+        """Handle drop — reorder items based on MIME row data."""
         if action == Qt.DropAction.IgnoreAction:
             return True
         if not data.hasFormat('application/x-onyx-mod-row'):
             return False
 
         raw = data.data('application/x-onyx-mod-row').data().decode()
-        src_rows = [int(r) for r in raw.split(',') if r]
-
-        # Determine insertion point
+        src_rows  = [int(r) for r in raw.split(',') if r]
         insert_at = row if row >= 0 else len(self._items)
 
-        # Collect items to move (stable order)
         moving = [self._items[r] for r in sorted(src_rows)
                   if 0 <= r < len(self._items)]
 
-        # Remove from current positions (high→low to preserve indices)
         for r in sorted(src_rows, reverse=True):
             if 0 <= r < len(self._items):
-                # Adjust insertion point if we remove rows before it
                 if r < insert_at:
                     insert_at -= 1
                 self._items.pop(r)
 
-        # Insert at destination
         for i, item in enumerate(moving):
             self._items.insert(insert_at + i, item)
 
         self.layoutChanged.emit()
         return True
 
-    # ── Public item manipulation API ──────────────────────────────────────────
-
-    def appendItem(self, item: ModItem):
+    def appendItem(self, item: ModItem) -> None:  # pylint: disable=invalid-name
+        """Append a ModItem to the end of the list."""
         row = len(self._items)
         self.beginInsertRows(QModelIndex(), row, row)
         self._items.append(item)
         self.endInsertRows()
 
-    def removeRow(self, row: int,
+    def removeRow(self, row: int,  # pylint: disable=invalid-name
                   parent: QModelIndex = QModelIndex()) -> bool:
-        if not (0 <= row < len(self._items)):
+        """Remove the item at the given row. Returns False if out of range."""
+        if not 0 <= row < len(self._items):
             return False
         self.beginRemoveRows(parent, row, row)
         self._items.pop(row)
         self.endRemoveRows()
         return True
 
-    def clear(self):
+    def clear(self) -> None:
+        """Remove all items."""
         if not self._items:
             return
         self.beginResetModel()
@@ -220,26 +214,31 @@ class ModListModel(QAbstractListModel):
         self.endResetModel()
 
     def item(self, row: int) -> Optional[ModItem]:
+        """Return the ModItem at the given row, or None."""
         if 0 <= row < len(self._items):
             return self._items[row]
         return None
 
-    def indexOf(self, item: ModItem) -> int:
+    def indexOf(self, item: ModItem) -> int:  # pylint: disable=invalid-name
+        """Return the index of item, or -1 if not found."""
         try:
             return self._items.index(item)
         except ValueError:
             return -1
 
-    def indexOfMid(self, mid: str) -> int:
+    def indexOfMid(self, mid: str) -> int:  # pylint: disable=invalid-name
+        """Return the index of the first item with the given package_id, or -1."""
         for i, it in enumerate(self._items):
             if it.mid == mid:
                 return i
         return -1
 
-    def allItems(self) -> list[ModItem]:
+    def allItems(self) -> list[ModItem]:  # pylint: disable=invalid-name
+        """Return a copy of all items."""
         return list(self._items)
 
-    def popAll(self) -> list['ModItem']:
+    def popAll(self) -> list[ModItem]:  # pylint: disable=invalid-name
+        """Remove and return all items atomically."""
         if not self._items:
             return []
         self.beginResetModel()
@@ -248,14 +247,12 @@ class ModListModel(QAbstractListModel):
         self.endResetModel()
         return items
 
-# ── Delegate ──────────────────────────────────────────────────────────────────
 
 class ModDelegate(QStyledItemDelegate):
     """
-    Paints each row as:   ● ModName  [package.id]       [NEW]
-                           ↑ dot      ↑ name text        ↑ teal pill
+    Paints each row:  ● ModName [package.id]   [NEW]
 
-    Only called for visible rows — this is the 9.4 lazy rendering benefit.
+    Only called for visible rows — lazy rendering benefit.
     """
 
     _DOT_W      = 18
@@ -264,47 +261,42 @@ class ModDelegate(QStyledItemDelegate):
     _SPACING    = 6
     _ROW_H      = 26
 
-    def sizeHint(self, option: QStyleOptionViewItem,
-                 index: QModelIndex) -> QSize:
+    def sizeHint(self, option: QStyleOptionViewItem,  # pylint: disable=invalid-name
+                 _index: QModelIndex) -> QSize:
+        """Return the preferred row size."""
         return QSize(option.rect.width(), self._ROW_H)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem,
-            index: QModelIndex):
+              index: QModelIndex) -> None:
+        """Paint one row with a colored dot, mod name, and optional NEW pill."""
         painter.save()
 
-        from app.core.app_settings import AppSettings
-        from app.ui.styles import get_colors
-        c = get_colors(AppSettings.instance().theme)
-
+        c      = get_colors(AppSettings.instance().theme)
         rect   = option.rect
         color  = index.data(COLOR_ROLE) or c['item_normal']
         text   = index.data(TEXT_ROLE)  or ''
         is_new = bool(index.data(NEW_ROLE))
 
-        # ── Selection / hover / normal background ─────────────────────────
         if option.state & QStyle.StateFlag.State_Selected:
             bg = QColor(c['accent'])
             bg.setAlpha(60)
             painter.fillRect(rect, bg)
         elif option.state & QStyle.StateFlag.State_MouseOver:
-            bg = QColor(c['bg_mid'])
-            painter.fillRect(rect, bg)
+            painter.fillRect(rect, QColor(c['bg_mid']))
         else:
             painter.fillRect(rect, QColor(c['bg_panel']))
 
         x  = rect.left() + 4
         cy = rect.center().y()
 
-        # ── Colored dot ───────────────────────────────────────────────────
         painter.setPen(QColor(color))
         dot_font = painter.font()
         dot_font.setPointSize(7)
         painter.setFont(dot_font)
-        dot_rect = QRect(x, rect.top(), self._DOT_W, rect.height())
-        painter.drawText(dot_rect, Qt.AlignmentFlag.AlignCenter, '●')
+        painter.drawText(QRect(x, rect.top(), self._DOT_W, rect.height()),
+                         Qt.AlignmentFlag.AlignCenter, '●')
         x += self._DOT_W + self._SPACING
 
-        # ── [NEW] pill ────────────────────────────────────────────────────
         pill_w = 0
         if is_new:
             pill_font = painter.font()
@@ -326,7 +318,6 @@ class ModDelegate(QStyledItemDelegate):
             painter.drawText(pill_rect, Qt.AlignmentFlag.AlignCenter, 'NEW')
             pill_w += self._SPACING
 
-        # ── Mod name ──────────────────────────────────────────────────────
         name_font = painter.font()
         name_font.setPointSize(9)
         name_font.setBold(False)
@@ -343,28 +334,26 @@ class ModDelegate(QStyledItemDelegate):
         painter.restore()
 
 
-# ── View (public interface) ───────────────────────────────────────────────────
-
-class DragDropList(QListView):
+class DragDropList(QListView):  # pylint: disable=invalid-name
     """
     Drop-in replacement for the old QListWidget-based DragDropList.
 
     Signals
     -------
     items_changed       — debounced, emitted after any add/remove/reorder
-    needs_badge_refresh — emitted after cross-list drag to trigger badge recompute
-    itemDoubleClicked   — emits ModItem (matches old QListWidget signal pattern)
+    needs_badge_refresh — emitted after cross-list drag
+    itemDoubleClicked   — emits ModItem
     currentItemChanged  — emits (ModItem | None, ModItem | None)
     """
 
     items_changed       = pyqtSignal()
     needs_badge_refresh = pyqtSignal()
-    itemDoubleClicked   = pyqtSignal(object)          # ModItem
-    currentItemChanged  = pyqtSignal(object, object)  # new ModItem, old ModItem
+    itemDoubleClicked   = pyqtSignal(object)
+    currentItemChanged  = pyqtSignal(object, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.partner: 'DragDropList | None' = None
+        self.partner: DragDropList | None = None
 
         self._model    = ModListModel(self)
         self._delegate = ModDelegate(self)
@@ -376,10 +365,7 @@ class DragDropList(QListView):
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
-        self.setSelectionMode(
-            QAbstractItemView.SelectionMode.ExtendedSelection)
-
-        # Mouse-over tracking for hover highlight
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setMouseTracking(True)
 
         self._change_timer = QTimer(self)
@@ -387,53 +373,46 @@ class DragDropList(QListView):
         self._change_timer.setInterval(50)
         self._change_timer.timeout.connect(self.items_changed.emit)
 
-        # Wire internal signals to our compat signals
         self.doubleClicked.connect(self._on_double_clicked)
         self.selectionModel().currentChanged.connect(self._on_current_changed)
 
-        # Track layout changes for items_changed debounce
         self._model.layoutChanged.connect(self._emit_changed)
         self._model.rowsInserted.connect(self._emit_changed)
         self._model.rowsRemoved.connect(self._emit_changed)
 
-    # ── Partner ───────────────────────────────────────────────────────────────
-
-    def set_partner(self, other: 'DragDropList'):
+    def set_partner(self, other: DragDropList) -> None:
+        """Set the partner list for cross-list drag/drop."""
         self.partner = other
 
-    # ── Signal adapters ───────────────────────────────────────────────────────
-
-    def _on_double_clicked(self, index: QModelIndex):
+    def _on_double_clicked(self, index: QModelIndex) -> None:
         item = self._model.item(index.row())
         if item:
             self.itemDoubleClicked.emit(item)
 
     def _on_current_changed(self, current: QModelIndex,
-                             previous: QModelIndex):
+                             previous: QModelIndex) -> None:
         cur = self._model.item(current.row()) if current.isValid() else None
         prv = self._model.item(previous.row()) if previous.isValid() else None
         self.currentItemChanged.emit(cur, prv)
 
-    def _emit_changed(self):
+    def _emit_changed(self) -> None:
         self._change_timer.start()
 
-    # ── QListWidget-compatible item API ───────────────────────────────────────
-
-    def addItem(self, item: ModItem):
-        """Append a ModItem. Accepts ModItem (not QListWidgetItem)."""
+    def addItem(self, item: ModItem) -> None:  # pylint: disable=invalid-name
+        """Append a ModItem."""
         self._model.appendItem(item)
 
-    def insertItem(self, row: int, item: ModItem):
-        """Insert a ModItem at row. If row < 0 or > count, appends."""
+    def insertItem(self, row: int, item: ModItem) -> None:  # pylint: disable=invalid-name
+        """Insert a ModItem at row. Appends if row is out of range."""
         if row < 0 or row >= self._model.rowCount():
             self._model.appendItem(item)
             return
         self._model.beginInsertRows(QModelIndex(), row, row)
-        self._model._items.insert(row, item)
+        self._model._items.insert(row, item)  # pylint: disable=protected-access
         self._model.endInsertRows()
 
-    def takeItem(self, row: int) -> Optional[ModItem]:
-        """Remove and return ModItem at row. Returns None if out of range."""
+    def takeItem(self, row: int) -> Optional[ModItem]:  # pylint: disable=invalid-name
+        """Remove and return the ModItem at row, or None if out of range."""
         item = self._model.item(row)
         if item is None:
             return None
@@ -441,67 +420,58 @@ class DragDropList(QListView):
         return item
 
     def item(self, row: int) -> Optional[ModItem]:
+        """Return the ModItem at row, or None."""
         return self._model.item(row)
 
     def count(self) -> int:
+        """Return the total number of items."""
         return self._model.rowCount()
 
     def row(self, item: ModItem) -> int:
+        """Return the index of item, or -1."""
         return self._model.indexOf(item)
 
-    def clear(self):
+    def clear(self) -> None:
+        """Remove all items."""
         self._model.clear()
 
-    def itemAt(self, pos: QPoint) -> Optional[ModItem]:
+    def itemAt(self, pos: QPoint) -> Optional[ModItem]:  # pylint: disable=invalid-name
+        """Return the ModItem at the given viewport position, or None."""
         index = self.indexAt(pos)
         if not index.isValid():
             return None
         return self._model.item(index.row())
 
-    def selectedItems(self) -> list[ModItem]:
+    def selectedItems(self) -> list[ModItem]:  # pylint: disable=invalid-name
+        """Return all currently selected ModItems."""
         rows = {i.row() for i in self.selectedIndexes() if i.isValid()}
         return [self._model.item(r) for r in sorted(rows)
                 if self._model.item(r) is not None]
 
-    # ── apply_item_widgets compatibility ──────────────────────────────────────
-
-    def apply_item_widgets(self):
-        """
-        No-op in the QListView implementation — the delegate repaints
-        automatically when model data changes.
-        Kept for API compatibility with callers in item_builder.py etc.
-        """
+    def apply_item_widgets(self) -> None:
+        """Trigger a repaint. Kept for API compatibility."""
         self.viewport().update()
-
-    # ── Snapshot / rebuild (used by dropEvent cross-list) ─────────────────────
 
     def _snapshot_items(self) -> list[dict]:
         return [
-            {
-                'text':    it.text,
-                'mid':     it.mid,
-                'color':   it.color,
-                'is_new':  it.is_new,
-                'tooltip': it.tooltip,
-            }
+            {'text': it.text, 'mid': it.mid, 'color': it.color,
+             'is_new': it.is_new, 'tooltip': it.tooltip}
             for it in self._model.allItems()
         ]
 
-    def _rebuild_from_snapshot(self, snapshot: list[dict]):
+    def _rebuild_from_snapshot(self, snapshot: list[dict]) -> None:
         self._model.clear()
         for d in snapshot:
             self._model.appendItem(ModItem(
                 text=d['text'], mid=d['mid'], color=d['color'],
                 is_new=d.get('is_new', False), tooltip=d['tooltip']))
 
-    # ── ID helpers ────────────────────────────────────────────────────────────
-
     def get_ids(self) -> list[str]:
+        """Return ordered list of package_ids for all items."""
         return [it.mid for it in self._model.allItems() if it.mid]
 
-    # ── Filter ────────────────────────────────────────────────────────────────
-
-    def filter_text(self, query: str):
+    def filter_text(self, query: str) -> None:
+        """Show/hide items by text match."""
         q = query.lower()
         for i in range(self._model.rowCount()):
             item = self._model.item(i)
@@ -511,57 +481,45 @@ class DragDropList(QListView):
             item.setHidden(hidden)
             self.setRowHidden(i, hidden)
 
-    def filter_by_ids(self, ids: set | None):
+    def filter_by_ids(self, ids: set | None) -> None:
+        """Show/hide items by package_id set. None shows all."""
         for i in range(self._model.rowCount()):
             item = self._model.item(i)
             if item is None:
                 continue
-            if ids is None:
-                hidden = False
-            else:
-                hidden = item.mid not in ids
+            hidden = False if ids is None else item.mid not in ids
             item.setHidden(hidden)
             self.setRowHidden(i, hidden)
 
-    # ── Drag / drop ───────────────────────────────────────────────────────────
-
-    def dropEvent(self, event):
+    def dropEvent(self, event):  # pylint: disable=invalid-name
+        """Handle drop — internal reorder or cross-list transfer."""
         src = event.source()
 
         if src is self:
-            # Internal reorder — let model handle via dropMimeData
             super().dropEvent(event)
             self._emit_changed()
 
         elif src is self.partner:
-            # Cross-list transfer
             selected = src.selectedItems()
             if not selected:
                 event.ignore()
                 return
 
-            # Filter out Core
-            move_items = [
-                it for it in selected
-                if it.mid and it.mid.lower() != 'ludeon.rimworld'
-            ]
+            move_items = [it for it in selected
+                          if it.mid and it.mid.lower() != 'ludeon.rimworld']
             if not move_items:
                 event.ignore()
                 return
 
             move_mids = {it.mid for it in move_items}
 
-            # Determine drop row in destination
             drop_index = self.indexAt(event.position().toPoint())
-            drop_row   = (drop_index.row()
-                          if drop_index.isValid()
+            drop_row   = (drop_index.row() if drop_index.isValid()
                           else self._model.rowCount())
 
-            # Rebuild source without moved items
-            from app.core.app_settings import AppSettings
-            from app.ui.styles import get_colors
-            _c = get_colors(AppSettings.instance().theme)
+            c = get_colors(AppSettings.instance().theme)
 
+            # pylint: disable=protected-access
             src_snap = [d for d in src._snapshot_items()
                         if d['mid'] not in move_mids]
             src._model.clear()
@@ -573,7 +531,7 @@ class DragDropList(QListView):
             for i, it in enumerate(move_items):
                 new_item = ModItem(
                     text=it.text, mid=it.mid,
-                    color=_c['item_normal'], is_new=False,
+                    color=c['item_normal'], is_new=False,
                     tooltip=it.tooltip)
                 row = drop_row + i
                 if row >= self._model.rowCount():
@@ -582,26 +540,30 @@ class DragDropList(QListView):
                     self._model.beginInsertRows(QModelIndex(), row, row)
                     self._model._items.insert(row, new_item)
                     self._model.endInsertRows()
+            # pylint: enable=protected-access
 
             event.acceptProposedAction()
             self.needs_badge_refresh.emit()
             self._emit_changed()
-            src._emit_changed()
+            src._emit_changed()  # pylint: disable=protected-access
 
         else:
             event.ignore()
 
-    def dragEnterEvent(self, event):
+    def dragEnterEvent(self, event) -> None:  # pylint: disable=invalid-name
+        """Accept drag events from self or partner."""
         if event.source() in (self, self.partner):
             event.acceptProposedAction()
         else:
             event.ignore()
 
-    def dragMoveEvent(self, event):
+    def dragMoveEvent(self, event) -> None:  # pylint: disable=invalid-name
+        """Accept drag move events from self or partner."""
         if event.source() in (self, self.partner):
             event.acceptProposedAction()
         else:
             event.ignore()
 
-    def popAllItems(self) -> list[ModItem]:
+    def popAllItems(self) -> list[ModItem]:  # pylint: disable=invalid-name
+        """Remove and return all items atomically."""
         return self._model.popAll()

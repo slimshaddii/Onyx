@@ -1,13 +1,19 @@
+"""Onyx Launcher — main application window."""
+
 import os
 import subprocess
+import threading
 from pathlib import Path
-from PyQt6.QtWidgets import (
+
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QMainWindow, QWidget, QHBoxLayout, QSplitter,
     QToolBar, QStatusBar, QMessageBox, QLabel, QFileDialog,
-    QSizePolicy,
+    QSizePolicy, QApplication, QInputDialog,
 )
-from PyQt6.QtCore import Qt, QTimer, QSize
-from PyQt6.QtGui import QAction
+from PyQt6.QtCore import Qt, QTimer, QSize  # pylint: disable=no-name-in-module
+from PyQt6.QtGui import (  # pylint: disable=no-name-in-module
+    QAction, QShortcut, QKeySequence,
+)
 
 from app.core.instance_manager import InstanceManager
 from app.core.rimworld import RimWorldDetector
@@ -19,15 +25,19 @@ from app.core.steam_integration import DownloadMethod
 from app.core.modlist import export_rimsort_modlist
 from app.core.app_settings import AppSettings
 from app.core.mod_watcher import ModWatcher
+from app.core.mod_update_checker import ModTimestampStore, check_updates
 from app.core.paths import (
     get_default_data_root, ensure_data_dirs, instances_dir, mods_dir,
 )
 from app.ui.instance_list import InstanceGridPanel
 from app.ui.instance_detail import InstanceDetailPanel
 from app.ui.settings_dialog import SettingsDialog
+from app.ui.styles import DARK_STYLESHEET, LIGHT_STYLESHEET
 
 
 class MainWindow(QMainWindow):
+    """Main application window for Onyx Launcher."""
+
     def __init__(self):
         super().__init__()
 
@@ -69,10 +79,13 @@ class MainWindow(QMainWindow):
             str(mods_dir(Path(dr))),
             max_concurrent=3,
             username=self.settings.get('steamcmd_username', ''))
-        from app.ui.modeditor.download_manager import DownloadManagerWindow
+
+        from app.ui.modeditor.download_manager import DownloadManagerWindow  # pylint: disable=import-outside-toplevel
         self._download_manager = DownloadManagerWindow(self.dl_queue, self)
-        self.log_parser = LogParser()
+
+        self.log_parser      = LogParser()
         self._child_windows: list = []
+        self._was_running:   bool = False
 
         self._mod_watcher = ModWatcher(self)
         self._mod_watcher.mods_changed.connect(self._on_mods_changed_on_disk)
@@ -98,9 +111,6 @@ class MainWindow(QMainWindow):
         if self._s.update_check_mode == 'auto':
             QTimer.singleShot(3000, self._auto_check_updates)
 
-
-    # ── RimWorld / mod scan helpers ───────────────────────────────────────────
-
     def _all_mod_paths(self) -> list[str]:
         paths: list[str] = []
         dr = self.settings.get('data_root', '')
@@ -122,8 +132,10 @@ class MainWindow(QMainWindow):
         return paths
 
     def _init_rw(self):
+        # pylint: disable=protected-access
         self.rw._mods_cache.clear()
         self.rw._cache_time = 0.0
+        # pylint: enable=protected-access
         exe = self.settings.get('rimworld_exe', '')
         if exe and Path(exe).exists():
             self.rw.set_game_path(str(Path(exe).parent))
@@ -133,8 +145,6 @@ class MainWindow(QMainWindow):
         return self.rw.get_installed_mods(self._all_mod_paths(),
                                           force_rescan=True,
                                           max_age_seconds=0)
-
-    # ── File watcher ──────────────────────────────────────────────────────────
 
     def _update_watcher_paths(self):
         self._mod_watcher.update_paths(
@@ -148,19 +158,14 @@ class MainWindow(QMainWindow):
         self.refresh()
         self.sl.setText("Mods updated")
 
-    # ── Theme ─────────────────────────────────────────────────────────────────
-
     def _apply_theme(self, force: bool = False):
-        from PyQt6.QtWidgets import QApplication
-        from app.ui.styles import DARK_STYLESHEET, LIGHT_STYLESHEET
-        app        = QApplication.instance()
-        new_theme  = self._s.theme
+        app       = QApplication.instance()
+        new_theme = self._s.theme
         last_theme = getattr(self, '_last_theme', None)
 
         sheet = DARK_STYLESHEET if new_theme == 'dark' else LIGHT_STYLESHEET
         app.setStyleSheet(sheet)
 
-        # Only repaint all widgets when theme actually changed
         if force or new_theme != last_theme:
             self._last_theme = new_theme
             for widget in app.allWidgets():
@@ -173,17 +178,12 @@ class MainWindow(QMainWindow):
         else:
             self.detail.actions.set_enabled(False)
 
-    # ── Shortcuts ─────────────────────────────────────────────────────────────
-
     def _install_shortcuts(self):
-        from PyQt6.QtGui import QShortcut, QKeySequence
         QShortcut(QKeySequence("Ctrl+N"), self).activated.connect(self._on_new)
         QShortcut(QKeySequence(Qt.Key.Key_F5), self).activated.connect(
             lambda: self.refresh(rescan_mods=False))
         QShortcut(QKeySequence("Ctrl+R"), self).activated.connect(
             lambda: self.refresh(rescan_mods=True))
-
-    # ── UI construction ───────────────────────────────────────────────────────
 
     def _build_toolbar(self):
         tb = QToolBar()
@@ -197,18 +197,15 @@ class MainWindow(QMainWindow):
         tb.addAction(QAction("🏪 Workshop",      self, triggered=self._on_workshop))
         tb.addAction(QAction("📋 Logs",          self, triggered=self._on_logs))
         tb.addSeparator()
-        tb.addAction(QAction("Downloads", self,
-                             triggered=self._on_downloads))
-        tb.addAction(QAction("Library", self,
-                             triggered=self._on_library))
-        tb.addAction(QAction("Check Updates", self,
-                             triggered=self._on_check_updates))
+        tb.addAction(QAction("Downloads",        self, triggered=self._on_downloads))
+        tb.addAction(QAction("Library",          self, triggered=self._on_library))
+        tb.addAction(QAction("Check Updates",    self, triggered=self._on_check_updates))
         tb.addSeparator()
         tb.addAction(QAction("⟳ Refresh",        self, triggered=self.refresh))
         spacer = QWidget()
         spacer.setObjectName("toolbarSpacer")
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding,
-                            QSizePolicy.Policy.Preferred)
+                             QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
         tb.addAction(QAction("🔍 Find Mod",      self, triggered=self._on_find_mod))
         tb.addAction(QAction("⚙ Settings",       self, triggered=self._on_settings))
@@ -264,16 +261,14 @@ class MainWindow(QMainWindow):
         self.gl = QLabel("")
         sb.addPermanentWidget(self.gl)
 
-    # ── Refresh ───────────────────────────────────────────────────────────────
-
     def refresh(self, rescan_mods: bool = False):
+        """Reload instance list and mod count from disk."""
         if rescan_mods:
             self._rescan_mods()
         insts = self.im.scan_instances()
         self.grid.set_instances(insts)
         n = len(insts)
         self.sl.setText(f"{n} instance{'s' if n != 1 else ''}")
-        # Use cache — don't force rescan on every refresh
         installed = self.rw.get_installed_mods(self._all_mod_paths())
         self.ml.setText(f"{len(installed)} mods installed")
 
@@ -282,24 +277,19 @@ class MainWindow(QMainWindow):
         self._child_windows.append(dlg)
         dlg.show()
 
-    # ── Instance handlers ─────────────────────────────────────────────────────
-
     def _on_select(self, inst):
         self.detail.set_instance(inst, self.rw)
 
     def _on_new(self):
-        from app.ui.instance_new_dialog import NewInstanceDialog
+        from app.ui.instance_new_dialog import NewInstanceDialog  # pylint: disable=import-outside-toplevel
         if NewInstanceDialog(self, self.rw, self.im,
                              dl_queue=self.dl_queue).exec():
             self.refresh()
 
     def _on_launch(self, inst):
-        from app.ui.launch_dialog import LaunchDialog
+        from app.ui.launch_dialog import LaunchDialog  # pylint: disable=import-outside-toplevel
 
-        # Skip dialog if user previously checked "remember"
         if inst.mods_configured:
-            from app.core.app_settings import AppSettings
-            from pathlib import Path
             _s        = AppSettings.instance()
             dr        = _s.data_root
             exe       = _s.rimworld_exe
@@ -307,7 +297,7 @@ class MainWindow(QMainWindow):
             inst_exe  = getattr(inst, 'rimworld_exe_override', '') or exe
             game_mods = Path(inst_exe).parent / 'Mods' if inst_exe else None
 
-            all_mods  = self.rw.get_installed_mods(self._all_mod_paths())
+            all_mods = self.rw.get_installed_mods(self._all_mod_paths())
             r = self.launcher.launch(
                 inst,
                 inst.launch_args,
@@ -321,11 +311,9 @@ class MainWindow(QMainWindow):
                 self.gl.setText("🎮 Running")
                 self.refresh()
             elif r:
-                from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.critical(self, "Launch Failed", r.message)
             return
 
-        # First time or remember unchecked — show dialog
         dlg = LaunchDialog(self, inst, self.launcher)
         if dlg.exec():
             r = dlg.launch_result
@@ -334,31 +322,29 @@ class MainWindow(QMainWindow):
                 self.gl.setText("🎮 Running")
                 self.refresh()
             elif r:
-                from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.critical(self, "Launch Failed", r.message)
 
     def _on_edit(self, inst):
-        from app.ui.instance_edit import InstanceEditDialog
+        from app.ui.instance_edit import InstanceEditDialog  # pylint: disable=import-outside-toplevel
         dlg = InstanceEditDialog(None, inst, self.rw)
         dlg.instance_changed.connect(self.refresh)
         self._open_child(dlg)
 
     def _on_edit_mods(self, inst):
-        from app.ui.modeditor import ModEditorDialog
+        from app.ui.modeditor import ModEditorDialog  # pylint: disable=import-outside-toplevel
         dlg = ModEditorDialog(self, inst, self.rw)
         if dlg.exec():
             self.refresh(rescan_mods=True)
             self.detail.set_instance(inst, self.rw)
 
     def _on_dup(self, inst):
-        from PyQt6.QtWidgets import QInputDialog
         name, ok = QInputDialog.getText(
             self, "Copy", "Name:", text=f"{inst.name} (Copy)")
         if ok and name:
             try:
                 self.im.duplicate_instance(inst, name)
                 self.refresh()
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 QMessageBox.critical(self, "Error", str(e))
 
     def _on_del(self, inst):
@@ -383,10 +369,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self, "Export", f"Exported {len(inst.mods)} mods.")
 
-    # ── .onyx pack handlers ───────────────────────────────────────────────────
-
     def _on_export_pack(self, inst):
-        from app.ui.onyxpack_dialog import OnyxExportDialog
+        from app.ui.onyxpack_dialog import OnyxExportDialog  # pylint: disable=import-outside-toplevel
         OnyxExportDialog(self, inst, self.rw).exec()
 
     def _on_import_pack(self):
@@ -395,22 +379,18 @@ class MainWindow(QMainWindow):
             "Onyx Packs (*.onyx);;All Files (*)")
         if not path:
             return
-        from app.ui.onyxpack_dialog import OnyxImportDialog
+        from app.ui.onyxpack_dialog import OnyxImportDialog  # pylint: disable=import-outside-toplevel
         self._rescan_mods()
         dlg = OnyxImportDialog(self, Path(path), self.rw, self.im,
                                dl_queue=self.dl_queue)
         if dlg.exec():
             self.refresh()
 
-    # ── Find mod ──────────────────────────────────────────────────────────────
-
     def _on_find_mod(self):
-        from app.ui.mod_search_dialog import ModSearchDialog
+        from app.ui.mod_search_dialog import ModSearchDialog  # pylint: disable=import-outside-toplevel
         installed = self.rw.get_installed_mods(self._all_mod_paths())
         insts     = self.im.scan_instances()
         ModSearchDialog(self, insts, installed).exec()
-
-    # ── Folder ────────────────────────────────────────────────────────────────
 
     @staticmethod
     def _open_folder(inst):
@@ -420,8 +400,6 @@ class MainWindow(QMainWindow):
         else:
             subprocess.Popen(['xdg-open', p])
 
-    # ── Workshop ──────────────────────────────────────────────────────────────
-
     def _on_workshop(self):
         for w in self._child_windows:
             if w.isVisible() and w.windowTitle().startswith("Steam Workshop"):
@@ -429,7 +407,7 @@ class MainWindow(QMainWindow):
                 w.activateWindow()
                 return
 
-        from app.ui.workshop import WorkshopBrowserDialog
+        from app.ui.workshop import WorkshopBrowserDialog  # pylint: disable=import-outside-toplevel
         installed = self.rw.get_installed_mods(self._all_mod_paths())
         ws_ids    = {info.workshop_id
                      for info in installed.values() if info.workshop_id}
@@ -439,10 +417,10 @@ class MainWindow(QMainWindow):
         dlg = WorkshopBrowserDialog(
             None,
             self.steamcmd, self.rw,
-            api_key=self.settings.get('steam_api_key', ''),
+            _api_key=self.settings.get('steam_api_key', ''),
             installed_workshop_ids=ws_ids,
             download_method=method,
-            is_steam_copy=self.settings.get('is_steam_copy', False),
+            _is_steam_copy=self.settings.get('is_steam_copy', False),
             settings=self.settings)
         dlg.destroyed.connect(lambda: self._on_child_closed(dlg))
         self._open_child(dlg)
@@ -450,17 +428,12 @@ class MainWindow(QMainWindow):
     def _on_child_closed(self, dlg):
         if dlg in self._child_windows:
             self._child_windows.remove(dlg)
-        from PyQt6.QtCore import QTimer
         QTimer.singleShot(0, lambda: (self._rescan_mods(), self.refresh()))
 
-    # ── Logs ──────────────────────────────────────────────────────────────────
-
     def _on_logs(self):
-        from app.ui.log_viewer import LogViewerDialog
+        from app.ui.log_viewer import LogViewerDialog  # pylint: disable=import-outside-toplevel
         inst = self.detail.current_instance
         LogViewerDialog(None, self.log_parser, inst).exec()
-
-    # ── Downloads ──────────────────────────────────────────────────────────────
 
     def _on_downloads(self):
         self._download_manager.show()
@@ -468,8 +441,7 @@ class MainWindow(QMainWindow):
         self._download_manager.activateWindow()
 
     def _on_library(self):
-        from app.ui.mod_library_dialog import ModLibraryDialog
-        from pathlib import Path
+        from app.ui.mod_library_dialog import ModLibraryDialog  # pylint: disable=import-outside-toplevel
         dr = self.settings.get('data_root', '')
         if not dr:
             QMessageBox.warning(
@@ -481,19 +453,13 @@ class MainWindow(QMainWindow):
             Path(dr) / 'mods',
             download_manager=self._download_manager)
         dlg.exec()
-        # Rescan in case mods were deleted
         self._rescan_mods()
         self.refresh()
 
-
-    # ── Updates ────────────────────────────────────────────────────────────────
-
     def _on_check_updates(self):
-        from app.ui.mod_update_dialog import ModUpdateDialog
-        from pathlib import Path
+        from app.ui.mod_update_dialog import ModUpdateDialog  # pylint: disable=import-outside-toplevel
         dr = self.settings.get('data_root', '')
         if not dr:
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(
                 self, "Check Updates",
                 "Data root not configured. Set it in Settings.")
@@ -504,13 +470,7 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _auto_check_updates(self):
-        """
-        Background update check on startup.
-        Shows badge count in status bar if updates found.
-        Runs silently — no dialog unless user clicks the status label.
-        """
-        from pathlib import Path
-        import threading
+        """Background update check on startup; shows badge count in status bar."""
         dr = self.settings.get('data_root', '')
         if not dr:
             return
@@ -519,12 +479,8 @@ class MainWindow(QMainWindow):
 
         def _run():
             try:
-                from app.core.mod_update_checker import (
-                    ModTimestampStore, check_updates)
-                from app.core.paths import mods_dir
-                from app.core.app_settings import AppSettings
-                _s     = AppSettings.instance()
-                paths  = []
+                _s    = AppSettings.instance()
+                paths = []
                 if _s.data_root:
                     paths.append(str(mods_dir(Path(_s.data_root))))
                 if _s.steam_workshop_path:
@@ -537,7 +493,7 @@ class MainWindow(QMainWindow):
                 names:     dict[str, str] = {}
                 mod_paths: dict[str, str] = {}
 
-                for pid, info in installed.items():
+                for _pid, info in installed.items():
                     if info.workshop_id:
                         ws_ids.append(info.workshop_id)
                         names[info.workshop_id]     = info.name
@@ -547,18 +503,15 @@ class MainWindow(QMainWindow):
                 updates = [r for r in results if r.has_update]
 
                 if updates:
-                    from PyQt6.QtCore import QTimer
                     QTimer.singleShot(
                         0,
                         lambda: self.sl.setText(
                             f"{len(updates)} mod update(s) available — "
                             f"click Check Updates"))
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 pass
 
         threading.Thread(target=_run, daemon=True).start()
-
-    # ── Settings ──────────────────────────────────────────────────────────────
 
     def _on_settings(self):
         dlg = SettingsDialog(self, self.settings)
@@ -590,8 +543,6 @@ class MainWindow(QMainWindow):
         self._init_rw()
         self._apply_theme(force=True)
         self.refresh()
-
-    # ── Auto-detect ───────────────────────────────────────────────────────────
 
     def _auto_detect(self):
         r = auto_detect_all()
@@ -640,30 +591,32 @@ class MainWindow(QMainWindow):
                 self.im.import_existing_data(
                     "Imported - Default", Path(existing['path']))
                 self.refresh()
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 QMessageBox.warning(self, "Error", str(e))
-
-    # ── Timer tick ────────────────────────────────────────────────────────────
 
     def _tick(self):
         if self.launcher.is_running():
             self.gl.setText("🎮 Running")
             self._was_running = True
-        elif getattr(self, '_was_running', False):
+        elif self._was_running:
             self._was_running = False
             self.gl.setText("")
             inst = self.detail.current_instance
-            if inst and self.launcher._launch_time:
-                mins = self.launcher.get_playtime_minutes()
-                if mins > 0:
-                    inst.total_playtime_minutes += mins
-                    inst.save()
-                    self.detail.set_instance(inst, self.rw)
-                self.launcher._launch_time = None
+            if inst:
+                # pylint: disable=protected-access
+                if self.launcher._launch_time:
+                    mins = self.launcher.get_playtime_minutes()
+                    if mins > 0:
+                        inst.total_playtime_minutes += mins
+                        inst.save()
+                        self.detail.set_instance(inst, self.rw)
+                    self.launcher._launch_time = None
+                # pylint: enable=protected-access
         else:
             self.gl.setText("")
 
-    def closeEvent(self, e):
+    def closeEvent(self, e):  # pylint: disable=invalid-name
+        """Save window geometry and close all child windows on exit."""
         self._timer.stop()
         self._mod_watcher.stop()
         self.settings['window'] = {

@@ -3,134 +3,224 @@ Dependency resolution: detect missing deps, find workshop IDs, offer downloads.
 """
 
 from dataclasses import dataclass
-from typing import Optional
-from app.core.rimworld import RimWorldDetector, ModInfo
+from app.core.rimworld import RimWorldDetector
 
 
 @dataclass
 class ModIssue:
-    mod_id: str
-    mod_name: str
-    issue_type: str  # 'missing_dep', 'version_mismatch', 'not_found', 'outdated'
-    severity: str    # 'error', 'warning', 'info'
-    message: str
-    dep_id: str = ''
-    dep_name: str = ''
-    workshop_id: str = ''
-    fixable: bool = False
-
-
-def analyze_modlist(mod_ids: list[str], rw: RimWorldDetector,
-                    game_version: str = '',
-                    ignored_deps: set[str] | None = None,
-                    extra_mod_paths: list[str] | None = None,
-                    known_workshop_ids: dict[str, str] | None = None,
-                    ) -> list[ModIssue]:
     """
-    Analyze a mod list for issues.
+    Represents a single issue found in an active mod list.
+
+    issue_type values : 'missing_dep' | 'version_mismatch' | 'not_found'
+    severity values   : 'error' | 'warning' | 'info'
+    """
+
+    mod_id:      str
+    mod_name:    str
+    issue_type:  str
+    severity:    str
+    message:     str
+    dep_id:      str = ''
+    dep_name:    str = ''
+    workshop_id: str = ''
+    fixable:     bool = False
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+def analyze_modlist(
+        mod_ids:            list[str],
+        rw:                 RimWorldDetector,
+        game_version:       str = '',
+        ignored_deps:       set[str] | None = None,
+        extra_mod_paths:    list[str] | None = None,
+        known_workshop_ids: dict[str, str] | None = None,
+) -> list[ModIssue]:
+    """
+    Analyze an active mod list and return all detected issues.
 
     Parameters
     ----------
-    ignored_deps : set of "mod_id:dep_id" strings.
-        Matching dependency pairs are skipped — same format as
-        Instance.ignored_deps.
+    mod_ids            : Ordered list of active package IDs.
+    rw                 : RimWorldDetector used to resolve installed mods.
+    game_version       : Full or short version string, e.g. '1.6.4630 rev467'.
+    ignored_deps       : Set of 'mod_id:dep_id' pairs to suppress.
+    extra_mod_paths    : Additional directories to scan for installed mods.
+    known_workshop_ids : Fallback map of package_id → workshop_id for
+                         mods not currently on disk.
     """
-    installed          = rw.get_installed_mods(
-        extra_mod_paths=extra_mod_paths or [])
-    active_set         = set(mod_ids)
-    ignored_deps       = ignored_deps or set()
-    known_ws           = known_workshop_ids or {}
+    installed    = rw.get_installed_mods(extra_mod_paths=extra_mod_paths)
+    active_set   = set(mod_ids)
+    ignored_deps = ignored_deps or set()
+    known_ws     = known_workshop_ids or {}
+    gv_short     = _short_version(game_version)
     issues: list[ModIssue] = []
 
     for mid in mod_ids:
         info = installed.get(mid)
-
-        # Not found on disk
         if not info:
-            ws_id = known_ws.get(mid, '')
-            issues.append(ModIssue(
-                mod_id=mid, mod_name=mid,
-                issue_type='not_found', severity='error',
-                message='Not found on disk',
-                workshop_id=ws_id,
-                fixable=bool(ws_id)))
+            issues.extend(_check_not_found(mid, known_ws))
             continue
-
-        # Missing dependencies
-        dep_alts = getattr(info, 'dep_alternatives', {})
-        for dep in getattr(info, 'dependencies', []):
-            if dep in active_set:
-                continue
-            # Check if any alternative package satisfies this dependency
-            alternatives = dep_alts.get(dep, [])
-            if any(alt in active_set for alt in alternatives):
-                continue  # satisfied by an alternative
-            dep_key = f"{mid}:{dep}"
-            if dep_key in ignored_deps:
-                continue  # user suppressed this warning
-
-                dep_info = installed.get(dep)
-                dep_name = dep_info.name if dep_info else dep
-                on_disk  = dep in installed
-
-                if on_disk:
-                    issues.append(ModIssue(
-                        mod_id=mid, mod_name=info.name,
-                        issue_type='missing_dep', severity='warning',
-                        message=f"Requires '{dep_name}' (available, not active)",
-                        dep_id=dep, dep_name=dep_name, fixable=True))
-                else:
-                    ws_id = known_ws.get(dep, '')
-                    if not ws_id and dep_info:
-                        ws_id = dep_info.workshop_id
-                    issues.append(ModIssue(
-                        mod_id=mid, mod_name=info.name,
-                        issue_type='missing_dep', severity='error',
-                        message=f"Requires '{dep_name}' (NOT INSTALLED)",
-                        dep_id=dep, dep_name=dep_name,
-                        workshop_id=ws_id, fixable=bool(ws_id)))
-
-        # Version mismatch
-        if game_version and info.supported_versions:
-            major_minor = game_version.split('.')[:2]
-            gv_short    = '.'.join(major_minor) if len(major_minor) >= 2 \
-                          else game_version
-            if gv_short not in info.supported_versions:
-                partial = any(v.startswith(gv_short.split('.')[0] + '.')
-                              for v in info.supported_versions)
-                issues.append(ModIssue(
-                    mod_id=mid, mod_name=info.name,
-                    issue_type='version_mismatch',
-                    severity='warning' if partial else 'error',
-                    message=f"Supports {', '.join(info.supported_versions)} "
-                            f"(game is {gv_short})",
-                    workshop_id=info.workshop_id))
+        issues.extend(_check_missing_deps(mid, info, active_set,
+                                          installed, ignored_deps, known_ws))
+        issues.extend(_check_version(mid, info, game_version, gv_short))
 
     return issues
 
 
 def get_downloadable_deps(issues: list[ModIssue]) -> list[tuple[str, str]]:
-    seen, result = set(), []
+    """
+    Return (workshop_id, name) pairs for mods that can be downloaded.
+
+    Covers two cases:
+      - A required dependency is missing from disk and has a known workshop ID.
+      - An active mod itself is not found on disk and has a known workshop ID.
+    Deduplicates by dep_id / mod_id so each download target appears once.
+    """
+    seen:   set[str]             = set()
+    result: list[tuple[str, str]] = []
+
     for issue in issues:
-        # Download missing deps that aren't installed
-        if (issue.issue_type == 'missing_dep' and
-                issue.workshop_id and issue.severity == 'error'):
-            if issue.dep_id not in seen:
-                seen.add(issue.dep_id)
-                result.append((issue.workshop_id, issue.dep_name))
-        # Also download mods that aren't found on disk at all
-        elif (issue.issue_type == 'not_found' and
-              issue.workshop_id):
-            if issue.mod_id not in seen:
-                seen.add(issue.mod_id)
-                result.append((issue.workshop_id, issue.mod_name))
+        if (issue.issue_type == 'missing_dep'
+                and issue.severity == 'error'
+                and issue.workshop_id
+                and issue.dep_id not in seen):
+            seen.add(issue.dep_id)
+            result.append((issue.workshop_id, issue.dep_name))
+
+        elif (issue.issue_type == 'not_found'
+              and issue.workshop_id
+              and issue.mod_id not in seen):
+            seen.add(issue.mod_id)
+            result.append((issue.workshop_id, issue.mod_name))
+
     return result
 
+
 def get_activatable_deps(issues: list[ModIssue]) -> list[str]:
-    seen, result = set(), []
+    """
+    Return dep_ids for missing dependencies that are installed but not active.
+
+    These can be fixed by moving the mod from inactive to active without
+    requiring a download. Deduplicates so each dep_id appears once.
+    """
+    seen:   set[str]  = set()
+    result: list[str] = []
+
     for issue in issues:
-        if (issue.issue_type == 'missing_dep' and
-                issue.severity == 'warning' and issue.dep_id not in seen):
+        if (issue.issue_type == 'missing_dep'
+                and issue.severity == 'warning'
+                and issue.dep_id not in seen):
             seen.add(issue.dep_id)
             result.append(issue.dep_id)
+
     return result
+
+
+# ── Internal helpers ──────────────────────────────────────────────────────────
+
+def _short_version(game_version: str) -> str:
+    """
+    Convert a full version string to 'major.minor' format.
+
+    '1.6.4630 rev467' → '1.6'
+    '1.6'             → '1.6'
+    ''                → ''
+    """
+    if not game_version:
+        return ''
+    parts = game_version.split('.')[:2]
+    return '.'.join(parts) if len(parts) >= 2 else game_version
+
+
+def _check_not_found(mid: str,
+                     known_ws: dict[str, str]) -> list[ModIssue]:
+    """Return a not_found issue for a mod that has no entry on disk."""
+    ws_id = known_ws.get(mid, '')
+    return [ModIssue(
+        mod_id=mid, mod_name=mid,
+        issue_type='not_found', severity='error',
+        message='Not found on disk',
+        workshop_id=ws_id,
+        fixable=bool(ws_id),
+    )]
+
+
+def _check_missing_deps(
+        mid:         str,
+        info:        object,
+        active_set:  set[str],
+        installed:   dict,
+        ignored_deps: set[str],
+        known_ws:    dict[str, str],
+) -> list[ModIssue]:
+    """
+    Check all declared dependencies of a mod and return issues for any missing.
+
+    Skips deps that are active, satisfied by an alternative, or ignored.
+    """
+    issues:   list[ModIssue] = []
+    dep_alts: dict           = getattr(info, 'dep_alternatives', {})
+
+    for dep in getattr(info, 'dependencies', []):
+        if dep in active_set:
+            continue
+        if any(alt in active_set for alt in dep_alts.get(dep, [])):
+            continue
+        if f"{mid}:{dep}" in ignored_deps:
+            continue
+
+        dep_info = installed.get(dep)
+        dep_name = dep_info.name if dep_info else dep
+        on_disk  = dep in installed
+
+        if on_disk:
+            issues.append(ModIssue(
+                mod_id=mid, mod_name=info.name,
+                issue_type='missing_dep', severity='warning',
+                message=f"Requires '{dep_name}' (available, not active)",
+                dep_id=dep, dep_name=dep_name, fixable=True,
+            ))
+        else:
+            ws_id = known_ws.get(dep, '')
+            if not ws_id and dep_info:
+                ws_id = dep_info.workshop_id
+            issues.append(ModIssue(
+                mod_id=mid, mod_name=info.name,
+                issue_type='missing_dep', severity='error',
+                message=f"Requires '{dep_name}' (NOT INSTALLED)",
+                dep_id=dep, dep_name=dep_name,
+                workshop_id=ws_id, fixable=bool(ws_id),
+            ))
+
+    return issues
+
+
+def _check_version(
+        mid:          str,
+        info:         object,
+        game_version: str,
+        gv_short:     str,
+) -> list[ModIssue]:
+    """
+    Return a version_mismatch issue if the mod does not support the game version.
+
+    Severity is 'warning' if the mod supports any version with the same major
+    number, 'error' otherwise (completely different version family).
+    """
+    if not game_version or not getattr(info, 'supported_versions', []):
+        return []
+    if gv_short in info.supported_versions:
+        return []
+
+    major        = gv_short.split('.')[0] + '.'
+    partial_match = any(v.startswith(major) for v in info.supported_versions)
+
+    return [ModIssue(
+        mod_id=mid, mod_name=info.name,
+        issue_type='version_mismatch',
+        severity='warning' if partial_match else 'error',
+        message=(f"Supports {', '.join(info.supported_versions)} "
+                 f"(game is {gv_short})"),
+        workshop_id=getattr(info, 'workshop_id', ''),
+    )]

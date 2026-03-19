@@ -2,15 +2,20 @@
 
 import shutil
 from pathlib import Path
-from PyQt6.QtWidgets import (
+
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QListWidget, QListWidgetItem, QAbstractItemView,
     QMenu, QMessageBox,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt  # pylint: disable=no-name-in-module
 
-from app.core.rimworld import RimWorldDetector, ModInfo
+from app.core.app_settings import AppSettings
+from app.core.mod_linker import delete_mod_permanently
 from app.core.modlist import VANILLA_AND_DLCS
+from app.core.rimworld import RimWorldDetector, ModInfo
+from app.core.steam_integration import open_workshop_page
+from app.core.steamcmd import DownloadQueue
 
 
 class LibraryDialog(QDialog):
@@ -25,6 +30,11 @@ class LibraryDialog(QDialog):
         self.game_version     = game_version
         self.rw               = rw
         self.selected_ids: list[str] = []
+
+        self.search:      QLineEdit   | None = None
+        self.mod_list:    QListWidget | None = None
+        self.count_label: QLabel      | None = None
+        self.sel_label:   QLabel      | None = None
 
         self.setWindowTitle("Mod Library — Add to Instance")
         self.setMinimumSize(560, 520)
@@ -144,7 +154,6 @@ class LibraryDialog(QDialog):
             m.addAction("⟳ Redownload from Workshop",
                         lambda: self._redownload_mod(mid))
             m.addSeparator()
-            from app.core.steam_integration import open_workshop_page
             m.addAction("Workshop page",
                         lambda: open_workshop_page(info.workshop_id))
 
@@ -167,8 +176,6 @@ class LibraryDialog(QDialog):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        from app.core.app_settings import AppSettings
-        from app.core.mod_linker import delete_mod_permanently
         _s = AppSettings.instance()
 
         workshop_id   = info.workshop_id or info.path.name
@@ -190,7 +197,7 @@ class LibraryDialog(QDialog):
         else:
             try:
                 shutil.rmtree(str(info.path))
-            except Exception as e:
+            except OSError as e:  # pylint: disable=broad-exception-caught
                 QMessageBox.critical(self, "Delete Failed", str(e))
                 return
 
@@ -222,7 +229,6 @@ class LibraryDialog(QDialog):
                 "This mod has no Workshop ID — cannot redownload.")
             return
 
-        from app.core.app_settings import AppSettings
         _s            = AppSettings.instance()
         steamcmd_path = _s.steamcmd_path
         data_root     = _s.data_root
@@ -236,14 +242,13 @@ class LibraryDialog(QDialog):
             QMessageBox.warning(self, "Error", "Data root not configured.")
             return
 
-        from app.core.steamcmd import DownloadQueue
-        from app.ui.modeditor.download_dialog import DownloadProgressDialog
+        from app.ui.modeditor.download_dialog import DownloadProgressDialog  # pylint: disable=import-outside-toplevel
 
         queue = DownloadQueue(
             steamcmd_path=steamcmd_path,
             destination=str(Path(data_root) / 'mods'),
             max_concurrent=1,
-            username=_s.steamcmd_username)          # ← fixed
+            username=_s.steamcmd_username)
 
         dlg = DownloadProgressDialog(
             self, queue, [(info.workshop_id, info.name)])

@@ -3,13 +3,12 @@ incompatible mods, and JuMLi community conflict/performance notices."""
 
 from app.core.rimworld import ModInfo
 
-# ── Color palette ─────────────────────────────────────────────────────────────
-COLOR_ERROR       = '#ff4444'
-COLOR_DEPENDENCY  = '#ff8800'
-COLOR_WARNING     = '#ff8800'
-COLOR_ORDER       = '#ffaa00'
-COLOR_VERSION     = '#ff8800'
-COLOR_INFO        = '#888888'
+COLOR_ERROR      = '#ff4444'
+COLOR_DEPENDENCY = '#ff8800'
+COLOR_WARNING    = '#ff8800'
+COLOR_ORDER      = '#ffaa00'
+COLOR_VERSION    = '#ff8800'
+COLOR_INFO       = '#888888'
 
 SEVERITY_CONFIG: dict[str, tuple[str, str]] = {
     'error':       ('❌', COLOR_ERROR),
@@ -29,65 +28,117 @@ _NOTICE_MAP: dict[str, tuple[str, str]] = {
 }
 
 
+def make_error_key(mid: str, sev: str, msg: str) -> str:
+    """Build the storage key used in Instance.ignored_errors.
+
+    Format: "mod_id:severity:first_40_chars_of_message", lowercased.
+    """
+    return f"{mid}:{sev}:{msg[:40].strip()}".lower()
+
+
 def get_badges(mid: str, all_mods: dict[str, ModInfo], active_ids: set[str],
                game_version: str, active_order: list[str] = None,
                _pos_cache: dict | None = None,
                ignored_deps: set[str] | None = None,
+               ignored_errors: set[str] | None = None,
                ) -> list[tuple[str, str, str, str]]:
-    badges       = []
-    info         = all_mods.get(mid)
-    ignored_deps = ignored_deps or set()
+    """Return all issue badges for a single mod in the active list."""
+    badges         = []
+    info           = all_mods.get(mid)
+    ignored_deps   = ignored_deps   or set()
+    ignored_errors = ignored_errors or set()
 
     if not info:
-        badges.append(('❌', COLOR_ERROR, 'error', 'Not found on disk'))
+        msg = 'Not found on disk'
+        if make_error_key(mid, 'error', msg) not in ignored_errors:
+            badges.append(('❌', COLOR_ERROR, 'error', msg))
         return badges
 
+    _check_missing_deps(mid, info, all_mods, active_ids,
+                        ignored_deps, ignored_errors, badges)
+    _check_incompatible(mid, info, all_mods, active_ids, ignored_errors, badges)
+    _check_version(mid, info, game_version, ignored_errors, badges)
+    _check_order(mid, info, all_mods, active_order, _pos_cache,
+                 ignored_errors, badges)
+    _check_juml_notices(mid, info, ignored_errors, badges)
+
+    return badges
+
+
+def _check_missing_deps(mid: str, info: ModInfo,
+                        all_mods: dict[str, ModInfo],
+                        active_ids: set[str],
+                        ignored_deps: set[str],
+                        ignored_errors: set[str],
+                        badges: list) -> None:
+    """Append missing-dependency badges for *mid* into *badges*."""
     dep_alts = getattr(info, 'dep_alternatives', {})
     for dep in getattr(info, 'dependencies', []):
         if dep in active_ids:
             continue
-        # Check alternatives
         if any(alt in active_ids for alt in dep_alts.get(dep, [])):
             continue
-        dep_key = f"{mid}:{dep}"
-        if dep_key in ignored_deps:
+        if f"{mid}:{dep}" in ignored_deps:
             continue
         on_disk  = dep in all_mods
         dep_name = all_mods[dep].name if on_disk else dep
         if on_disk:
-            badges.append((
-                '⚠', COLOR_DEPENDENCY, 'dep',
-                f"Needs '{dep_name}' (declared in About.xml, not active)",
-            ))
+            msg = f"Needs '{dep_name}' (declared in About.xml, not active)"
+            if make_error_key(mid, 'dep', msg) not in ignored_errors:
+                badges.append(('⚠', COLOR_DEPENDENCY, 'dep', msg))
         else:
-            badges.append((
-                '❌', COLOR_ERROR, 'error',
-                f"Needs '{dep_name}' (declared in About.xml, NOT INSTALLED)",
-            ))
+            msg = f"Needs '{dep_name}' (declared in About.xml, NOT INSTALLED)"
+            if make_error_key(mid, 'error', msg) not in ignored_errors:
+                badges.append(('❌', COLOR_ERROR, 'error', msg))
 
+
+def _check_incompatible(mid: str, info: ModInfo,
+                        all_mods: dict[str, ModInfo],
+                        active_ids: set[str],
+                        ignored_errors: set[str],
+                        badges: list) -> None:
+    """Append incompatibility badges for *mid* into *badges*."""
     for incompat in getattr(info, 'incompatible_with', []):
         incompat_l = incompat.lower()
         if incompat_l in active_ids:
             incompat_name = (all_mods[incompat_l].name
                              if incompat_l in all_mods else incompat_l)
-            badges.append((
-                '🚫', COLOR_ERROR, 'error',
-                f"Incompatible with '{incompat_name}' (declared in About.xml)",
-            ))
+            msg = f"Incompatible with '{incompat_name}' (declared in About.xml)"
+            if make_error_key(mid, 'error', msg) not in ignored_errors:
+                badges.append(('🚫', COLOR_ERROR, 'error', msg))
 
+
+def _check_version(mid: str, info: ModInfo, game_version: str,
+                   ignored_errors: set[str], badges: list) -> None:
+    """Append a version-mismatch badge for *mid* into *badges* if needed."""
     if not check_version(info, game_version):
-        badges.append((
-            '🔶', COLOR_VERSION, 'warning',
-            f"Version: {', '.join(info.supported_versions)}",
-        ))
+        msg = f"Version: {', '.join(info.supported_versions)}"
+        if make_error_key(mid, 'warning', msg) not in ignored_errors:
+            badges.append(('🔶', COLOR_VERSION, 'warning', msg))
 
-    if active_order:
-        _pos         = _pos_cache or {m: i for i, m in enumerate(active_order)}
-        order_issues = check_load_order(mid, info, active_order, all_mods, _pos)
-        badges.extend(order_issues or [])
 
+def _check_order(mid: str, info: ModInfo,
+                 all_mods: dict[str, ModInfo],
+                 active_order: list[str] | None,
+                 _pos_cache: dict | None,
+                 ignored_errors: set[str],
+                 badges: list) -> None:
+    """Append load-order badges for *mid* into *badges* if needed."""
+    if not active_order:
+        return
+    _pos         = _pos_cache or {m: i for i, m in enumerate(active_order)}
+    order_issues = check_load_order(mid, info, active_order, all_mods, _pos)
+    for badge in (order_issues or []):
+        if make_error_key(mid, badge[2], badge[3]) not in ignored_errors:
+            badges.append(badge)
+
+
+def _check_juml_notices(mid: str, info: ModInfo,
+                        ignored_errors: set[str],
+                        badges: list) -> None:
+    """Append JuMLi community-notice badges for *mid* into *badges*."""
     try:
-        from app.core.conflict_db import ConflictDB
+        from app.core.conflict_db import ConflictDB  # pylint: disable=import-outside-toplevel
         db      = ConflictDB.instance()
         notices = db.get_notices(mid, info.workshop_id or '')
         for notice in notices:
@@ -99,17 +150,18 @@ def get_badges(mid: str, all_mods: dict[str, ModInfo], active_ids: set[str],
                 'alternative': '💡',
                 'info':        'ℹ',
             }.get(notice.notice_type, 'ℹ')
-            badges.append((icon, color, sev, notice.message))
-    except Exception:
+            msg = notice.message
+            if make_error_key(mid, sev, msg) not in ignored_errors:
+                badges.append((icon, color, sev, msg))
+    except Exception:  # pylint: disable=broad-exception-caught
         pass
-
-    return badges
 
 
 def check_load_order(mid: str, info: ModInfo, order: list[str],
                      all_mods: dict[str, ModInfo],
                      _pos_cache: dict | None = None,
                      ) -> list[tuple[str, str, str, str]]:
+    """Return load-order violation badges for *mid*."""
     badges     = []
     pos        = _pos_cache if _pos_cache is not None else {
         m: i for i, m in enumerate(order)}
@@ -142,6 +194,7 @@ def check_load_order(mid: str, info: ModInfo, order: list[str],
 
 
 def check_version(info: ModInfo, game_version: str) -> bool:
+    """Return True if *info* supports *game_version* (or if either is absent)."""
     if not info.supported_versions or not game_version:
         return True
     parts = game_version.split('.')[:2]
@@ -152,15 +205,18 @@ def check_version(info: ModInfo, game_version: str) -> bool:
 def count_issues(mod_ids: list[str], all_mods: dict[str, ModInfo],
                  game_version: str,
                  ignored_deps: set[str] | None = None,
+                 ignored_errors: set[str] | None = None,
                  ) -> dict[str, int]:
-    active       = set(mod_ids)
-    counts       = {k: 0 for k in SEVERITY_CONFIG}
-    _pos         = {m: i for i, m in enumerate(mod_ids)}
-    ignored_deps = ignored_deps or set()
+    """Return a severity → count mapping across all active mods."""
+    active         = set(mod_ids)
+    counts         = {k: 0 for k in SEVERITY_CONFIG}
+    _pos           = {m: i for i, m in enumerate(mod_ids)}
+    ignored_deps   = ignored_deps   or set()
+    ignored_errors = ignored_errors or set()
 
     for mid in mod_ids:
         for badge in get_badges(mid, all_mods, active, game_version,
-                                mod_ids, _pos, ignored_deps):
+                                mod_ids, _pos, ignored_deps, ignored_errors):
             sev = badge[2]
             if sev in counts:
                 counts[sev] += 1
@@ -172,14 +228,18 @@ def get_issue_mod_ids(mod_ids: list[str], all_mods: dict[str, ModInfo],
                       game_version: str,
                       ignored_deps: set[str] | None = None,
                       active_cats: set[str] | None = None,
+                      ignored_errors: set[str] | None = None,
                       ) -> set[str]:
-    result       = set()
-    active       = set(mod_ids)
-    ignored_deps = ignored_deps or set()
+    """Return the set of mod IDs that have at least one matching issue badge."""
+    result         = set()
+    active         = set(mod_ids)
+    ignored_deps   = ignored_deps   or set()
+    ignored_errors = ignored_errors or set()
 
     for mid in mod_ids:
         badges = get_badges(mid, all_mods, active, game_version,
-                            mod_ids, ignored_deps=ignored_deps)
+                            mod_ids, ignored_deps=ignored_deps,
+                            ignored_errors=ignored_errors)
         if active_cats is None:
             if badges:
                 result.add(mid)
@@ -190,6 +250,7 @@ def get_issue_mod_ids(mod_ids: list[str], all_mods: dict[str, ModInfo],
 
 
 def format_issue_color(counts: dict[str, int]) -> str:
+    """Return the highest-severity color for a severity count dict."""
     if counts.get('error', 0):
         return COLOR_ERROR
     if counts.get('dep', 0) or counts.get('warning', 0):

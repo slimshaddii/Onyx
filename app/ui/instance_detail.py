@@ -11,10 +11,13 @@ Delegates all rendering to focused sub-widgets in app/ui/detail/:
 
 import os
 import subprocess
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea
-from PyQt6.QtCore import pyqtSignal, Qt
+from datetime import datetime
+
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea  # pylint: disable=no-name-in-module
+from PyQt6.QtCore import pyqtSignal, Qt  # pylint: disable=no-name-in-module
 
 from app.core.instance import Instance
+from app.core.launcher import Launcher
 from app.core.rimworld import RimWorldDetector
 from app.ui.detail import (
     DetailHeader, DetailActions, DetailInfo, DetailSaves, DetailNotes,
@@ -22,6 +25,8 @@ from app.ui.detail import (
 
 
 class InstanceDetailPanel(QWidget):
+    """Right-side panel that displays details for the currently selected instance."""
+
     launch_requested      = pyqtSignal(object)
     edit_mods_requested   = pyqtSignal(object)
     duplicate_requested   = pyqtSignal(object)
@@ -33,8 +38,6 @@ class InstanceDetailPanel(QWidget):
         super().__init__(parent)
         self.current_instance: Instance | None = None
         self._build_ui()
-
-    # ── UI construction ───────────────────────────────────────────────────
 
     def _build_ui(self):
         outer = QVBoxLayout(self)
@@ -67,7 +70,6 @@ class InstanceDetailPanel(QWidget):
         scroll.setWidget(content)
         outer.addWidget(scroll)
 
-        # Wire action signals → panel signals
         self.actions.launch_clicked.connect(self._emit_launch)
         self.actions.edit_mods_clicked.connect(self._emit_edit_mods)
         self.actions.duplicate_clicked.connect(self._emit_dup)
@@ -75,10 +77,9 @@ class InstanceDetailPanel(QWidget):
         self.actions.export_pack_clicked.connect(self._emit_export_pack)
         self.actions.delete_clicked.connect(self._emit_del)
 
-    # ── Public API ────────────────────────────────────────────────────────
-
     def set_instance(self, inst: Instance,
                      rw: RimWorldDetector | None = None):
+        """Populate the panel with data for the given instance."""
         self.current_instance = inst
         self.header.set_instance(inst.name, str(inst.path))
         self.actions.set_enabled(True)
@@ -88,29 +89,23 @@ class InstanceDetailPanel(QWidget):
         self._check_untracked_playtime(inst)
 
     def _check_untracked_playtime(self, inst: Instance):
+        """Detect and record playtime from sessions that occurred outside the launcher.
+
+        If Player.log was modified after last_played, estimate elapsed
+        minutes from log timestamps and add them to the instance.
         """
-        If Player.log exists and was modified after last_played,
-        a session occurred while the launcher was closed.
-        Estimate and add the playtime from log timestamps.
-        """
-        import os
-        from app.core.launcher import Launcher
         log_path = inst.path / 'Player.log'
         if not log_path.exists():
             return
         try:
             log_mtime = os.path.getmtime(log_path)
-            from datetime import datetime as _dt
-            log_dt = _dt.fromtimestamp(log_mtime)
+            log_dt    = datetime.fromtimestamp(log_mtime)
 
-            # Parse last_played
             if inst.last_played:
-                last = _dt.fromisoformat(inst.last_played)
+                last = datetime.fromisoformat(inst.last_played)
             else:
                 return
 
-            # If log was modified significantly after last_played,
-            # a session happened outside the launcher
             diff_minutes = (log_dt - last).total_seconds() / 60
             if diff_minutes > 2:
                 mins = Launcher.get_session_minutes_from_log(inst.path)
@@ -118,18 +113,17 @@ class InstanceDetailPanel(QWidget):
                     inst.total_playtime_minutes += mins
                     inst.last_played = log_dt.isoformat()
                     inst.save()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass
 
     def clear(self):
+        """Clear the panel and disable actions."""
         self.current_instance = None
         self.header.clear()
         self.actions.set_enabled(False)
         self.info.clear()
         self.saves.clear()
         self.notes.clear()
-
-    # ── Signal emitters ───────────────────────────────────────────────────
 
     def _emit_launch(self):
         if self.current_instance:

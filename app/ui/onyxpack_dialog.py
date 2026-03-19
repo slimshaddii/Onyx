@@ -1,25 +1,28 @@
 """Export and Import dialogs for .onyx modpack files."""
 
+from datetime import datetime
 from pathlib import Path
-from PyQt6.QtWidgets import (
+
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTextEdit, QCheckBox, QGroupBox, QGridLayout,
     QListWidget, QListWidgetItem, QFileDialog, QMessageBox,
     QAbstractItemView,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt  # pylint: disable=no-name-in-module
 
+from app.core.app_settings import AppSettings
 from app.core.instance import Instance
-from app.core.rimworld import RimWorldDetector
 from app.core.onyxpack import (
     export_onyx, peek_onyx, check_onyx_mods,
     import_onyx, OnyxPreview, ONYX_EXTENSION,
 )
+from app.core.rimworld import RimWorldDetector
 
-
-# ── Export dialog ─────────────────────────────────────────────────────────────
 
 class OnyxExportDialog(QDialog):
+    """Dialog for exporting an instance as an .onyx modpack file."""
+
     def __init__(self, parent, instance: Instance, rw: RimWorldDetector):
         super().__init__(parent)
         self.inst = instance
@@ -98,17 +101,14 @@ class OnyxExportDialog(QDialog):
             QMessageBox.critical(self, "Export Failed", msg)
 
 
-# ── Import dialog ─────────────────────────────────────────────────────────────
-
 class OnyxImportDialog(QDialog):
-    """
-    Shows a preview of an .onyx pack and imports it as a new instance.
+    """Shows a preview of an .onyx pack and imports it as a new instance.
 
     Parameters
     ----------
     dl_queue : DownloadQueue | None
         If supplied, missing Workshop mods are offered for auto-download
-        after import (Phase 5.4).  Pass None to skip the download offer.
+        after import. Pass None to skip the download offer.
     """
 
     def __init__(self, parent, onyx_path: Path,
@@ -118,7 +118,7 @@ class OnyxImportDialog(QDialog):
         self.onyx_path  = onyx_path
         self.rw         = rw
         self.im         = instance_manager
-        self.dl_queue   = dl_queue       # DownloadQueue | None
+        self.dl_queue   = dl_queue
         self._preview: OnyxPreview | None = None
 
         self.created_instance = None
@@ -133,7 +133,6 @@ class OnyxImportDialog(QDialog):
         lo = QVBoxLayout(self)
         lo.setSpacing(8)
 
-        # ── Pack metadata ─────────────────────────────────────────────────
         info = QGroupBox("Pack Info")
         grid = QGridLayout()
         grid.setVerticalSpacing(4)
@@ -155,14 +154,12 @@ class OnyxImportDialog(QDialog):
         self.desc_label.setMaximumHeight(50)
         lo.addWidget(self.desc_label)
 
-        # ── Instance name ─────────────────────────────────────────────────
         name_row = QHBoxLayout()
         name_row.addWidget(QLabel("Instance name:"))
         self.name_input = QLineEdit()
         name_row.addWidget(self.name_input)
         lo.addLayout(name_row)
 
-        # ── Mod list ──────────────────────────────────────────────────────
         mod_group = QGroupBox("Mods")
         ml = QVBoxLayout()
 
@@ -170,8 +167,6 @@ class OnyxImportDialog(QDialog):
         self.status_label.setStyleSheet("font-size:11px;")
         ml.addWidget(self.status_label)
 
-        # Read-only list — colors applied via QLabel item widgets
-        # because setForeground is ignored when a stylesheet is active.
         self.mod_list = QListWidget()
         self.mod_list.setSelectionMode(
             QAbstractItemView.SelectionMode.NoSelection)
@@ -179,12 +174,10 @@ class OnyxImportDialog(QDialog):
         mod_group.setLayout(ml)
         lo.addWidget(mod_group, 1)
 
-        # ── Options ───────────────────────────────────────────────────────
         self.config_cb = QCheckBox("Import config files")
         self.config_cb.setChecked(True)
         lo.addWidget(self.config_cb)
 
-        # ── Status labels ─────────────────────────────────────────────────
         self.warning_label = QLabel("")
         self.warning_label.setStyleSheet("color:#ffaa00;font-weight:bold;")
         self.warning_label.setWordWrap(True)
@@ -197,7 +190,6 @@ class OnyxImportDialog(QDialog):
         self.error_label.hide()
         lo.addWidget(self.error_label)
 
-        # ── Buttons ───────────────────────────────────────────────────────
         btns = QHBoxLayout()
         btns.addStretch()
         cancel_btn = QPushButton("Cancel")
@@ -208,8 +200,6 @@ class OnyxImportDialog(QDialog):
         self.import_btn.clicked.connect(self._do_import)
         btns.addWidget(self.import_btn)
         lo.addLayout(btns)
-
-    # ── Preview ───────────────────────────────────────────────────────────
 
     def _load_preview(self):
         preview = peek_onyx(self.onyx_path)
@@ -235,11 +225,10 @@ class OnyxImportDialog(QDialog):
 
         if m.created:
             try:
-                from datetime import datetime
                 dt = datetime.fromisoformat(m.created)
                 self._info_labels['Created'].setText(
                     dt.strftime("%b %d, %Y %H:%M"))
-            except Exception:
+            except ValueError:
                 self._info_labels['Created'].setText(m.created[:16])
 
         if m.description:
@@ -252,10 +241,6 @@ class OnyxImportDialog(QDialog):
             self.config_cb.setChecked(False)
             self.config_cb.setText("Import config files (not included in pack)")
 
-        # ── Populate mod list using QLabel item widgets ────────────────────
-        # setForeground() is silently ignored when any QSS stylesheet is active
-        # on the QListWidget. We use setItemWidget(QLabel) instead — same
-        # pattern as drag_list.py apply_item_widgets().
         self.mod_list.clear()
         installed_set = set(installed.keys())
 
@@ -298,8 +283,6 @@ class OnyxImportDialog(QDialog):
             self.warning_label.setText(msg)
             self.warning_label.show()
 
-    # ── Import ────────────────────────────────────────────────────────────
-
     def _do_import(self):
         name = self.name_input.text().strip()
         if not name:
@@ -320,7 +303,6 @@ class OnyxImportDialog(QDialog):
         self.created_instance = inst
         self.missing_mods     = missing
 
-        # ── Build result message ──────────────────────────────────────────
         lines = [f"✅ Created instance '{name}'"]
         if inst:
             lines.append(f"  Active: {inst.mod_count} mods")
@@ -333,7 +315,6 @@ class OnyxImportDialog(QDialog):
             if len(missing) > 5:
                 lines.append(f"  … and {len(missing) - 5} more")
 
-        # ── Phase 5.4 — offer Workshop download for missing mods ──────────
         downloadable = [mod for mod in missing if mod.workshop_id]
 
         if downloadable and self.dl_queue and self.dl_queue.is_configured:
@@ -347,12 +328,11 @@ class OnyxImportDialog(QDialog):
                 QMessageBox.StandardButton.Yes)
 
             if reply == QMessageBox.StandardButton.Yes:
-                self.accept()   # close import dialog first
+                self.accept()
                 self._queue_downloads(downloadable)
                 return
-            
+
         else:
-            # No downloadable mods or no download queue configured
             if downloadable and not self.dl_queue:
                 lines.append(
                     "\nTip: Configure SteamCMD in Settings to auto-download "
@@ -364,14 +344,10 @@ class OnyxImportDialog(QDialog):
 
     def _queue_downloads(self, mods: list):
         """Show download manager for missing mods."""
-        from app.core.app_settings import AppSettings
-        from app.core.paths import mods_dir
-        from pathlib import Path
-        from app.ui.modeditor.download_manager import DownloadManagerWindow
+        from app.ui.modeditor.download_manager import DownloadManagerWindow  # pylint: disable=import-outside-toplevel
 
         _s = AppSettings.instance()
         if not _s.steamcmd_path or not Path(_s.steamcmd_path).exists():
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(
                 self, "SteamCMD Not Configured",
                 "Set the SteamCMD path in Settings to download mods.")
@@ -388,7 +364,6 @@ class OnyxImportDialog(QDialog):
     def _on_downloads_complete(self, results: list):
         ok  = sum(1 for _, s, _ in results if s)
         bad = len(results) - ok
-        from PyQt6.QtWidgets import QMessageBox
         if ok and bad:
             QMessageBox.information(
                 self, "Downloads Complete",

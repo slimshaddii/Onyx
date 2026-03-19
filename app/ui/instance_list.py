@@ -1,12 +1,17 @@
+"""Instance list panel — Prism-style grouped card grid for instance management."""
+
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QMouseEvent
-from PyQt6.QtWidgets import (
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QMimeData  # pylint: disable=no-name-in-module
+from PyQt6.QtGui import (  # pylint: disable=no-name-in-module
+    QMouseEvent, QDrag, QPainter, QColor,
+)
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QLineEdit, QComboBox, QFrame, QScrollArea, QMenu,
     QInputDialog, QFileDialog, QMessageBox, QColorDialog,
@@ -21,9 +26,9 @@ from app.ui.styles import get_colors
 _UNGROUPED_KEY = '\x00ungrouped'
 
 
-# ── Instance card ─────────────────────────────────────────────────────────────
-
 class InstanceCard(QFrame):
+    """Card widget representing a single instance in the grid."""
+
     clicked           = pyqtSignal(object)
     double_clicked    = pyqtSignal(object)
     context_requested = pyqtSignal(object, object)
@@ -63,7 +68,7 @@ class InstanceCard(QFrame):
             try:
                 lp = datetime.fromisoformat(
                     instance.last_played).strftime("%b %d")
-            except Exception:
+            except ValueError:
                 lp = instance.last_played[:10]
         lp_l = QLabel(lp)
         lp_l.setObjectName("cardStat")
@@ -71,12 +76,14 @@ class InstanceCard(QFrame):
         lo.addWidget(lp_l)
 
     def set_selected(self, sel: bool):
+        """Apply or remove the selected visual style."""
         self.setObjectName(
             "instanceCardSelected" if sel else "instanceCard")
         self.style().unpolish(self)
         self.style().polish(self)
 
-    def mousePressEvent(self, e: QMouseEvent):
+    def mousePressEvent(self, e: QMouseEvent):  # pylint: disable=invalid-name
+        """Emit clicked or context_requested on left/right press."""
         if e.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self.instance)
         elif e.button() == Qt.MouseButton.RightButton:
@@ -84,16 +91,16 @@ class InstanceCard(QFrame):
                 self.instance, self.mapToGlobal(e.pos()))
         super().mousePressEvent(e)
 
-    def mouseDoubleClickEvent(self, e: QMouseEvent):
+    def mouseDoubleClickEvent(self, e: QMouseEvent):  # pylint: disable=invalid-name
+        """Emit double_clicked on left double-click."""
         if e.button() == Qt.MouseButton.LeftButton:
             self.double_clicked.emit(self.instance)
         super().mouseDoubleClickEvent(e)
 
-    def mouseMoveEvent(self, e: QMouseEvent):
-        if not (e.buttons() & Qt.MouseButton.LeftButton):
+    def mouseMoveEvent(self, e: QMouseEvent):  # pylint: disable=invalid-name
+        """Start a drag operation when the card is dragged with the left button."""
+        if not e.buttons() & Qt.MouseButton.LeftButton:
             return
-        from PyQt6.QtCore import QMimeData
-        from PyQt6.QtGui import QDrag, QPainter, QColor
         drag = QDrag(self)
         mime = QMimeData()
         mime.setData(
@@ -112,15 +119,16 @@ class InstanceCard(QFrame):
         drag.setHotSpot(e.pos())
         drag.exec(Qt.DropAction.MoveAction)
 
-# ── Group header widget ───────────────────────────────────────────────────────
 
 class GroupHeader(QWidget):
+    """Collapsible section header for an instance group."""
+
     toggle_requested = pyqtSignal(str, bool)
     rename_requested = pyqtSignal(str)
     delete_requested = pyqtSignal(str)
 
     def __init__(self, group_name: str, collapsed: bool = False,
-                 count: int = 0, parent=None):
+                 _count: int = 0, parent=None):
         super().__init__(parent)
         self.group_name = group_name
         self._collapsed = collapsed
@@ -162,13 +170,16 @@ class GroupHeader(QWidget):
         self.setStyleSheet(f"QWidget {{ background:{c['bg']}; }}")
 
     def is_collapsed(self) -> bool:
+        """Return True if this group is currently collapsed."""
         return self._collapsed
 
     def set_collapsed(self, val: bool):
+        """Set the collapsed state and refresh the visual style."""
         self._collapsed = val
         self._refresh_style()
 
-    def mousePressEvent(self, e: QMouseEvent):
+    def mousePressEvent(self, e: QMouseEvent):  # pylint: disable=invalid-name
+        """Toggle collapse on left click; show context menu on right click."""
         if e.button() == Qt.MouseButton.LeftButton:
             self._collapsed = not self._collapsed
             self._refresh_style()
@@ -179,7 +190,7 @@ class GroupHeader(QWidget):
 
     def _show_context(self, global_pos):
         if self.group_name == "Ungrouped":
-            return  # ungrouped section has no rename/delete
+            return
         m = QMenu(self)
         m.setStyleSheet(_menu_style())
         m.addAction("✏️  Rename…",
@@ -189,9 +200,9 @@ class GroupHeader(QWidget):
         m.exec(global_pos)
 
 
-# ── Card grid for one group ───────────────────────────────────────────────────
-
 class GroupCardGrid(QWidget):
+    """Card grid for all instances within a single group, with drag-drop support."""
+
     def __init__(self, group_name: str = '', parent=None):
         super().__init__(parent)
         self.group_name  = group_name
@@ -204,21 +215,25 @@ class GroupCardGrid(QWidget):
         self._layout.setContentsMargins(4, 4, 4, 8)
 
     def set_drop_callback(self, cb):
+        """Register a callback invoked when a card is dropped onto this grid."""
         self._on_drop_cb = cb
 
-    def dragEnterEvent(self, e):
+    def dragEnterEvent(self, e):  # pylint: disable=invalid-name
+        """Accept drag if it carries an onyx instance payload."""
         if e.mimeData().hasFormat('application/x-onyx-instance'):
             e.acceptProposedAction()
         else:
             e.ignore()
 
-    def dragMoveEvent(self, e):
+    def dragMoveEvent(self, e):  # pylint: disable=invalid-name
+        """Keep accepting drag move while the payload is valid."""
         if e.mimeData().hasFormat('application/x-onyx-instance'):
             e.acceptProposedAction()
         else:
             e.ignore()
 
-    def dropEvent(self, e):
+    def dropEvent(self, e):  # pylint: disable=invalid-name
+        """Handle a dropped instance card and invoke the drop callback."""
         if not e.mimeData().hasFormat('application/x-onyx-instance'):
             e.ignore()
             return
@@ -232,6 +247,7 @@ class GroupCardGrid(QWidget):
                  selected: Instance | None,
                  on_click, on_double, on_context,
                  drop_callback=None):
+        """Clear and rebuild all instance cards in a grid layout."""
         if drop_callback:
             self.set_drop_callback(drop_callback)
 
@@ -251,8 +267,6 @@ class GroupCardGrid(QWidget):
 
         return self
 
-
-# ── Shared menu style ─────────────────────────────────────────────────────────
 
 def _menu_style() -> str:
     c = get_colors(AppSettings.instance().theme)
@@ -283,9 +297,9 @@ def _menu_style() -> str:
     """
 
 
-# ── Main panel ────────────────────────────────────────────────────────────────
-
 class InstanceGridPanel(QWidget):
+    """Main panel showing all instances as a grouped card grid with search and sort."""
+
     instance_selected       = pyqtSignal(object)
     instance_double_clicked = pyqtSignal(object)
     rename_requested        = pyqtSignal(object)
@@ -314,14 +328,13 @@ class InstanceGridPanel(QWidget):
         self._selected_instance: Instance | None = None
         self._collapsed: dict[str, bool]         = {}
         self._empty_groups: set[str]             = set()
+        self._last_cols: int                     = -1
 
         self._resize_timer = QTimer(self)
         self._resize_timer.setSingleShot(True)
         self._resize_timer.timeout.connect(self._rebuild)
 
         self._build()
-
-    # ── Persistence ───────────────────────────────────────────────────────────
 
     def _groups_path(self) -> Path | None:
         dr = AppSettings.instance().data_root
@@ -334,7 +347,7 @@ class InstanceGridPanel(QWidget):
                 data = json.loads(p.read_text(encoding='utf-8'))
                 self._empty_groups = set(data.get('empty_groups', []))
                 return
-            except Exception:
+            except (OSError, json.JSONDecodeError):
                 pass
         self._empty_groups = set()
 
@@ -347,10 +360,8 @@ class InstanceGridPanel(QWidget):
                 json.dumps({'empty_groups': sorted(self._empty_groups)},
                            indent=2),
                 encoding='utf-8')
-        except Exception:
+        except OSError:
             pass
-
-    # ── UI build ──────────────────────────────────────────────────────────────
 
     def _build(self):
         lo = QVBoxLayout(self)
@@ -410,9 +421,8 @@ class InstanceGridPanel(QWidget):
 
         self._load_empty_groups()
 
-    # ── Data ─────────────────────────────────────────────────────────────────
-
     def set_instances(self, insts: list[Instance]):
+        """Replace the instance list, refresh the group filter, and rebuild the grid."""
         self.instances = insts
         self._load_empty_groups()
 
@@ -429,8 +439,6 @@ class InstanceGridPanel(QWidget):
         self.group_filter.blockSignals(False)
 
         self._rebuild()
-
-    # ── Rebuild ───────────────────────────────────────────────────────────────
 
     def _rebuild(self):
         self.gc.setVisible(False)
@@ -465,10 +473,10 @@ class InstanceGridPanel(QWidget):
             self._rebuild_flat(filt, cols)
 
         self.cnt.setText(f"{len(filt)}/{len(self.instances)}")
-
         self.gc.setVisible(True)
 
     def _rebuild_flat(self, instances: list[Instance], cols: int):
+        """Populate the grid with all instances in a single ungrouped layout."""
         grid = GroupCardGrid('')
         grid.populate(
             instances, cols, self._selected_instance,
@@ -476,10 +484,12 @@ class InstanceGridPanel(QWidget):
             self.instance_double_clicked.emit,
             self._show_context,
             drop_callback=self._on_card_dropped)
+        # pylint: disable=protected-access
         for i in range(grid._layout.count()):
             w = grid._layout.itemAt(i).widget()
             if isinstance(w, InstanceCard):
                 self._cards.append(w)
+        # pylint: enable=protected-access
         self._content_lo.insertWidget(
             self._content_lo.count() - 1, grid)
 
@@ -519,10 +529,12 @@ class InstanceGridPanel(QWidget):
                 drop_callback=self._on_card_dropped)
             grid.setVisible(not is_collapsed)
 
+            # pylint: disable=protected-access
             for i in range(grid._layout.count()):
                 w = grid._layout.itemAt(i).widget()
                 if isinstance(w, InstanceCard):
                     self._cards.append(w)
+            # pylint: enable=protected-access
 
             self._content_lo.insertWidget(insert_pos, grid)
             insert_pos += 1
@@ -532,7 +544,6 @@ class InstanceGridPanel(QWidget):
 
             hdr = GroupHeader("Ungrouped", is_collapsed, len(ungrouped))
             hdr.toggle_requested.connect(self._on_group_toggle)
-            # No rename/delete for ungrouped — disable those signals
             self._content_lo.insertWidget(insert_pos, hdr)
             insert_pos += 1
 
@@ -544,13 +555,13 @@ class InstanceGridPanel(QWidget):
                 self._show_context,
                 drop_callback=self._on_card_dropped)
             grid.setVisible(not is_collapsed)
+            # pylint: disable=protected-access
             for i in range(grid._layout.count()):
                 w = grid._layout.itemAt(i).widget()
                 if isinstance(w, InstanceCard):
                     self._cards.append(w)
+            # pylint: enable=protected-access
             self._content_lo.insertWidget(insert_pos, grid)
-
-    # ── Group toggle ──────────────────────────────────────────────────────────
 
     def _on_group_toggle(self, group_name: str, is_collapsed: bool):
         key = _UNGROUPED_KEY if group_name == "Ungrouped" else group_name
@@ -562,8 +573,6 @@ class InstanceGridPanel(QWidget):
                 if grid_item and grid_item.widget():
                     grid_item.widget().setVisible(not is_collapsed)
                 break
-
-    # ── Group actions ─────────────────────────────────────────────────────────
 
     def _on_group_rename(self, old_name: str):
         name, ok = QInputDialog.getText(
@@ -599,8 +608,6 @@ class InstanceGridPanel(QWidget):
         self._save_empty_groups()
         self._rebuild()
 
-    # ── Selection ─────────────────────────────────────────────────────────────
-
     def _on_click(self, inst: Instance):
         self._selected_instance = inst
         for card in self._cards:
@@ -614,8 +621,6 @@ class InstanceGridPanel(QWidget):
         if inst is None or inst.group == target_group:
             return
         self._move_inst_to_group(inst, target_group)
-
-    # ── Context menus ─────────────────────────────────────────────────────────
 
     def _show_context(self, inst: Instance, pos):
         m = QMenu(self)
@@ -686,8 +691,6 @@ class InstanceGridPanel(QWidget):
 
         m.exec(self.gc.mapToGlobal(pos))
 
-    # ── Group CRUD ────────────────────────────────────────────────────────────
-
     def _create_group(self):
         name, ok = QInputDialog.getText(
             self, "New Group", "Group name:")
@@ -727,8 +730,6 @@ class InstanceGridPanel(QWidget):
         self._save_empty_groups()
         self._rebuild()
 
-    # ── Icon helpers ──────────────────────────────────────────────────────────
-
     def _rename(self, inst: Instance):
         name, ok = QInputDialog.getText(
             self, "Rename", "New name:", text=inst.name)
@@ -764,20 +765,17 @@ class InstanceGridPanel(QWidget):
             self, "Select Icon", "",
             "Images (*.png *.jpg *.jpeg *.ico *.bmp)")
         if path:
-            import shutil
             dest = inst.path / 'icon.png'
             shutil.copy2(path, str(dest))
             self._rebuild()
 
-    # ── Resize ────────────────────────────────────────────────────────────────
-
-    def resizeEvent(self, e):
+    def resizeEvent(self, e):  # pylint: disable=invalid-name
+        """Rebuild the grid only when the column count changes."""
         super().resizeEvent(e)
-        # Only rebuild if column count actually changes
-        vw      = self.scroll.viewport().width()
-        vw      = vw if vw > 50 else 350
+        vw       = self.scroll.viewport().width()
+        vw       = vw if vw > 50 else 350
         new_cols = max(1, (vw - 6) // 158)
-        if new_cols != getattr(self, '_last_cols', -1):
+        if new_cols != self._last_cols:
             self._last_cols = new_cols
             if self._cards:
                 self._resize_timer.start(150)

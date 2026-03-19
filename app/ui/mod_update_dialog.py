@@ -4,26 +4,32 @@ Shows which installed mods have updates available on Steam Workshop.
 """
 
 import threading
+from datetime import datetime
 from pathlib import Path
-from PyQt6.QtWidgets import (
+
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QProgressBar, QComboBox,
     QGroupBox,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QObject
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, pyqtSignal, QObject  # pylint: disable=no-name-in-module
+from PyQt6.QtGui import QColor  # pylint: disable=no-name-in-module
 
 from app.core.app_settings import AppSettings
+from app.core.mod_update_checker import ModTimestampStore, check_updates
+from app.core.paths import mods_dir
 from app.ui.styles import get_colors
 
 
 class _CheckWorker(QObject):
-    finished  = pyqtSignal(list)   # list[ModUpdateInfo]
-    progress  = pyqtSignal(str)    # status message
-    error     = pyqtSignal(str)
+    finished = pyqtSignal(list)
+    progress = pyqtSignal(str)
+    error    = pyqtSignal(str)
 
 
 class ModUpdateDialog(QDialog):
+    """Dialog for checking and downloading mod updates from Steam Workshop."""
+
     def __init__(self, parent, rw, data_root: Path,
                  download_manager=None):
         super().__init__(parent)
@@ -41,11 +47,9 @@ class ModUpdateDialog(QDialog):
         self._build()
 
     def _build(self):
-        c  = get_colors(AppSettings.instance().theme)
         lo = QVBoxLayout(self)
         lo.setSpacing(8)
 
-        # ── Settings row ──────────────────────────────────────────────────
         settings_row = QHBoxLayout()
         settings_row.addWidget(QLabel("Auto-check:"))
         self._mode_cb = QComboBox()
@@ -60,17 +64,15 @@ class ModUpdateDialog(QDialog):
         settings_row.addStretch()
         lo.addLayout(settings_row)
 
-        # ── Status ────────────────────────────────────────────────────────
         self._status_lbl = QLabel("Click 'Check Now' to scan for updates.")
         self._status_lbl.setObjectName("subheading")
         lo.addWidget(self._status_lbl)
 
         self._progress_bar = QProgressBar()
-        self._progress_bar.setRange(0, 0)   # indeterminate
+        self._progress_bar.setRange(0, 0)
         self._progress_bar.hide()
         lo.addWidget(self._progress_bar)
 
-        # ── Results list ──────────────────────────────────────────────────
         results_group = QGroupBox("Results")
         rg_lo = QVBoxLayout()
 
@@ -82,7 +84,6 @@ class ModUpdateDialog(QDialog):
         results_group.setLayout(rg_lo)
         lo.addWidget(results_group, 1)
 
-        # ── Buttons ───────────────────────────────────────────────────────
         btns = QHBoxLayout()
 
         self._check_btn = QPushButton("Check Now")
@@ -115,34 +116,27 @@ class ModUpdateDialog(QDialog):
         self._progress_bar.show()
         self._status_lbl.setText("Fetching installed mod list…")
 
-        worker  = self._worker
-        rw      = self.rw
-        dr      = self.data_root
+        worker = self._worker
+        rw     = self.rw
+        dr     = self.data_root
 
         def _run():
             try:
-                from app.core.app_settings import AppSettings
-                from app.core.paths import mods_dir
-                from app.core.mod_update_checker import (
-                    ModTimestampStore, check_updates)
-
-                _s     = AppSettings.instance()
-                paths  = []
+                _s    = AppSettings.instance()
+                paths = []
                 if _s.data_root:
                     paths.append(str(mods_dir(Path(_s.data_root))))
                 if _s.steam_workshop_path:
                     paths.append(_s.steam_workshop_path)
 
-                installed  = rw.get_installed_mods(
-                    extra_mod_paths=paths)
-                store      = ModTimestampStore(dr)
+                installed = rw.get_installed_mods(extra_mod_paths=paths)
+                store     = ModTimestampStore(dr)
 
-                # Collect workshop mods only
-                ws_ids:   list[str]       = []
-                names:    dict[str, str]  = {}
+                ws_ids:    list[str]      = []
+                names:     dict[str, str] = {}
                 mod_paths: dict[str, str] = {}
 
-                for pid, info in installed.items():
+                for _pid, info in installed.items():
                     if info.workshop_id:
                         ws_ids.append(info.workshop_id)
                         names[info.workshop_id]     = info.name
@@ -154,7 +148,7 @@ class ModUpdateDialog(QDialog):
                 results = check_updates(ws_ids, store, names, mod_paths)
                 worker.finished.emit(results)
 
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 worker.error.emit(str(e))
 
         threading.Thread(target=_run, daemon=True).start()
@@ -168,8 +162,7 @@ class ModUpdateDialog(QDialog):
         self._status_lbl.setText(f"Error: {msg}")
 
     def _on_results(self, results: list):
-        from app.core.mod_update_checker import ModUpdateInfo
-        self._results   = results
+        self._results = results
         self._progress_bar.hide()
         self._check_btn.setEnabled(True)
         self._list.clear()
@@ -183,18 +176,17 @@ class ModUpdateDialog(QDialog):
             f"{len(up_to_date)} up to date  |  "
             f"{len(results)} total checked")
 
-        # Updates first
         for r in sorted(updates, key=lambda x: x.name.lower()):
-            from datetime import datetime
             try:
                 remote_str = datetime.fromtimestamp(
                     r.remote_time).strftime("%b %d, %Y")
-            except Exception:
+            except (ValueError, OSError):
                 remote_str = "Unknown"
             try:
-                local_str = datetime.fromtimestamp(
-                    r.local_time).strftime("%b %d, %Y") if r.local_time else "Unknown"
-            except Exception:
+                local_str = (datetime.fromtimestamp(
+                    r.local_time).strftime("%b %d, %Y")
+                    if r.local_time else "Unknown")
+            except (ValueError, OSError):
                 local_str = "Unknown"
 
             it = QListWidgetItem(
@@ -204,7 +196,6 @@ class ModUpdateDialog(QDialog):
             it.setForeground(QColor(c['warning']))
             self._list.addItem(it)
 
-        # Up to date
         for r in sorted(up_to_date, key=lambda x: x.name.lower()):
             it = QListWidgetItem(f"✅  {r.name}")
             it.setData(Qt.ItemDataRole.UserRole, r)

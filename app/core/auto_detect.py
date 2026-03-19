@@ -1,6 +1,6 @@
 """
-Auto-detection for RimWorld install, Steam, SteamCMD, workshop folders.
-Supports Windows, Linux, and Steam Deck.
+Auto-detection for RimWorld install, Steam, SteamCMD, and workshop folders.
+Supports Windows, Linux, and Steam Deck (including Flatpak Steam).
 """
 
 import os
@@ -11,19 +11,28 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
 
+# winreg is Windows-only; import once at module level to satisfy pylint C0415.
+if platform.system() == 'Windows':
+    try:
+        import winreg as _WINREG
+    except ImportError:
+        _WINREG = None  # type: ignore[assignment]
+else:
+    _WINREG = None  # type: ignore[assignment]
+
 RIMWORLD_APP_ID = '294100'
 
-# ── Executable names per platform ────────────────────────────────────────────
+# ── Executable names per platform ─────────────────────────────────────────────
 RIMWORLD_EXE_NAMES = [
-    'RimWorldWin64.exe',   # Windows 64-bit
-    'RimWorldWin.exe',     # Windows 32-bit
-    'RimWorld.exe',        # Windows generic
-    'RimWorldLinux',       # Linux native
-    'RimWorld.sh',         # Linux shell wrapper
-    'rimworld',            # Linux lowercase
+    'RimWorldWin64.exe',  # Windows 64-bit
+    'RimWorldWin.exe',    # Windows 32-bit
+    'RimWorld.exe',       # Windows generic
+    'RimWorldLinux',      # Linux native
+    'RimWorld.sh',        # Linux shell wrapper
+    'rimworld',           # Linux lowercase
 ]
 
-# ── Windows paths ─────────────────────────────────────────────────────────────
+# ── Windows common paths ──────────────────────────────────────────────────────
 STEAM_COMMON_PATHS_WIN = [
     r'C:\Program Files (x86)\Steam',
     r'C:\Program Files\Steam',
@@ -46,17 +55,16 @@ NON_STEAM_COMMON_PATHS_WIN = [
     r'D:\GOG Games\RimWorld',
 ]
 
-# ── Linux / Steam Deck paths ──────────────────────────────────────────────────
+# ── Linux / Steam Deck common paths ───────────────────────────────────────────
 STEAM_COMMON_PATHS_LINUX = [
     str(Path.home() / '.steam' / 'steam'),
     str(Path.home() / '.steam' / 'root'),
     str(Path.home() / '.local' / 'share' / 'Steam'),
     '/usr/share/steam',
     '/opt/steam',
-    # Steam Deck
-    '/home/deck/.local/share/Steam',
+    '/home/deck/.local/share/Steam',  # Steam Deck
     str(Path.home() / '.var' / 'app' / 'com.valvesoftware.Steam'
-        / 'data' / 'Steam'),   # Flatpak Steam
+        / 'data' / 'Steam'),           # Flatpak Steam
 ]
 
 STEAMCMD_COMMON_PATHS_LINUX = [
@@ -73,7 +81,7 @@ NON_STEAM_COMMON_PATHS_LINUX = [
     '/opt/RimWorld',
 ]
 
-# ── macOS paths ───────────────────────────────────────────────────────────────
+# ── macOS common paths ────────────────────────────────────────────────────────
 STEAM_COMMON_PATHS_MAC = [
     str(Path.home() / 'Library' / 'Application Support' / 'Steam'),
 ]
@@ -83,29 +91,100 @@ STEAMCMD_COMMON_PATHS_MAC = [
     '/usr/local/bin/steamcmd',
 ]
 
+# Directories to skip during Windows drive scans (performance + safety)
+_DRIVE_SCAN_SKIP = frozenset({
+    'windows', 'programdata', '$recycle.bin',
+    'system volume information', 'recovery',
+    'perflogs', 'intel', 'nvidia', 'amd',
+})
+
+# Directories worth descending into during Windows drive scans
+_DRIVE_SCAN_DESCEND = frozenset({
+    'games', 'steam', 'steamlibrary', 'gog games',
+    'epic games', 'program files', 'program files (x86)',
+    'steamapps', 'common',
+})
+
 
 @dataclass
 class DetectionResult:
-    rimworld_exe:         str = ''
-    rimworld_path:        str = ''
-    steam_path:           str = ''
-    steam_workshop_path:  str = ''
-    steamcmd_path:        str = ''
-    is_steam_copy:        bool = False
-    extra_mod_paths:      list[str] = field(default_factory=list)
-    rimworld_version:     str = ''
-    detected_dlcs:        list[str] = field(default_factory=list)
-    logs:                 list[str] = field(default_factory=list)
+    """Holds the results of auto-detecting RimWorld, Steam, and SteamCMD."""
+
+    rimworld_exe:        str = ''
+    rimworld_path:       str = ''
+    steam_path:          str = ''
+    steam_workshop_path: str = ''
+    steamcmd_path:       str = ''
+    is_steam_copy:       bool = False
+    extra_mod_paths:     list[str] = field(default_factory=list)
+    rimworld_version:    str = ''
+    detected_dlcs:       list[str] = field(default_factory=list)
+    logs:                list[str] = field(default_factory=list)
 
     @property
     def found_rimworld(self) -> bool:
+        """Return True if a RimWorld executable was located."""
         return bool(self.rimworld_exe)
 
 
+# ── Public API ────────────────────────────────────────────────────────────────
+
 def auto_detect_all() -> DetectionResult:
+    """
+    Run full auto-detection for RimWorld, Steam, workshop, and SteamCMD.
+
+    Detection order:
+      1. Steam install and library folders
+      2. RimWorld inside Steam libraries
+      3. RimWorld at known non-Steam paths
+      4. RimWorld via drive scan (Windows only, last resort)
+      5. Steam Workshop folder
+      6. SteamCMD
+      7. Local Mods folder
+      8. RimWorld version string
+
+    Returns a populated DetectionResult; check .found_rimworld before use.
+    """
     result = DetectionResult()
     result.logs.append("Starting auto-detection...")
 
+    steam_path, library_folders = _detect_steam_and_libraries(result)
+
+    _detect_rimworld(result, library_folders)
+    _detect_workshop(result, steam_path, library_folders)
+    _detect_steamcmd(result)
+    _detect_local_mods(result)
+    _detect_version(result)
+
+    if not result.rimworld_exe:
+        result.logs.append(
+            "Could not find RimWorld. Please set the path manually.")
+
+    return result
+
+
+def detect_rimworld_exe_only() -> Optional[str]:
+    """Run full auto-detection and return the RimWorld executable path, or None."""
+    result = auto_detect_all()
+    return result.rimworld_exe if result.found_rimworld else None
+
+
+def detect_steam_workshop_folder() -> Optional[str]:
+    """Locate the Steam Workshop content folder for RimWorld, or return None."""
+    steam = _find_steam_install()
+    if steam:
+        libs = _find_steam_library_folders(steam)
+        ws   = _find_workshop_path(libs)
+        if ws:
+            return str(ws)
+    return None
+
+
+# ── auto_detect_all sub-steps ─────────────────────────────────────────────────
+
+def _detect_steam_and_libraries(
+        result: DetectionResult) -> tuple[Optional[Path], list[Path]]:
+    """Find Steam and enumerate all library folders. Mutates result.logs."""
     steam_path = _find_steam_install()
     if steam_path:
         result.steam_path = str(steam_path)
@@ -113,13 +192,24 @@ def auto_detect_all() -> DetectionResult:
     else:
         result.logs.append("Steam not found")
 
-    library_folders = []
+    library_folders: list[Path] = []
     if steam_path:
-        library_folders = _find_steam_library_folders(Path(steam_path))
+        library_folders = _find_steam_library_folders(steam_path)
         for lf in library_folders:
             result.logs.append(f"Found Steam library: {lf}")
 
-    # Find RimWorld in Steam libraries
+    return steam_path, library_folders
+
+
+def _detect_rimworld(result: DetectionResult,
+                     library_folders: list[Path]) -> None:
+    """
+    Populate result with RimWorld exe/path/is_steam_copy.
+
+    Tries Steam libraries first, then known non-Steam paths,
+    then a drive scan (Windows only).
+    """
+    # Steam libraries
     for lib_path in library_folders:
         rw_path = lib_path / 'steamapps' / 'common' / 'RimWorld'
         if rw_path.exists():
@@ -129,24 +219,22 @@ def auto_detect_all() -> DetectionResult:
                 result.rimworld_path = str(rw_path)
                 result.is_steam_copy = True
                 result.logs.append(f"Found RimWorld (Steam): {exe}")
-                break
+                return
 
-    # Non-Steam paths
-    if not result.rimworld_exe:
-        non_steam_paths = _get_non_steam_paths()
-        for common_path in non_steam_paths:
-            p = Path(common_path)
-            if p.exists():
-                exe = _find_rimworld_exe(p)
-                if exe:
-                    result.rimworld_exe  = str(exe)
-                    result.rimworld_path = str(p)
-                    result.is_steam_copy = _is_steam_copy(p)
-                    result.logs.append(f"Found RimWorld (non-Steam): {exe}")
-                    break
+    # Known non-Steam paths
+    for common_path in _get_non_steam_paths():
+        p = Path(common_path)
+        if p.exists():
+            exe = _find_rimworld_exe(p)
+            if exe:
+                result.rimworld_exe  = str(exe)
+                result.rimworld_path = str(p)
+                result.is_steam_copy = _is_steam_copy(p)
+                result.logs.append(f"Found RimWorld (non-Steam): {exe}")
+                return
 
-    # Drive scan (Windows only)
-    if not result.rimworld_exe and platform.system() == 'Windows':
+    # Drive scan (Windows last resort)
+    if platform.system() == 'Windows':
         for drive in ['C:', 'D:', 'E:', 'F:']:
             drive_path = Path(drive + '\\')
             if drive_path.exists():
@@ -156,17 +244,24 @@ def auto_detect_all() -> DetectionResult:
                     result.rimworld_path = str(found.parent)
                     result.is_steam_copy = _is_steam_copy(found.parent)
                     result.logs.append(f"Found RimWorld (drive scan): {found}")
-                    break
+                    return
 
-    # Workshop
-    if steam_path:
-        workshop_path = _find_workshop_path(library_folders)
-        if workshop_path:
-            result.steam_workshop_path = str(workshop_path)
-            result.extra_mod_paths.append(str(workshop_path))
-            result.logs.append(f"Found Workshop: {workshop_path}")
 
-    # SteamCMD
+def _detect_workshop(result: DetectionResult,
+                     steam_path: Optional[Path],
+                     library_folders: list[Path]) -> None:
+    """Find the Steam Workshop content folder and add it to extra_mod_paths."""
+    if not steam_path:
+        return
+    workshop_path = _find_workshop_path(library_folders)
+    if workshop_path:
+        result.steam_workshop_path = str(workshop_path)
+        result.extra_mod_paths.append(str(workshop_path))
+        result.logs.append(f"Found Workshop: {workshop_path}")
+
+
+def _detect_steamcmd(result: DetectionResult) -> None:
+    """Find SteamCMD and record its path."""
     steamcmd = _find_steamcmd()
     if steamcmd:
         result.steamcmd_path = str(steamcmd)
@@ -174,117 +269,138 @@ def auto_detect_all() -> DetectionResult:
     else:
         result.logs.append("SteamCMD not found")
 
-    # Local Mods folder
-    if result.rimworld_path:
-        local_mods = Path(result.rimworld_path) / 'Mods'
-        if local_mods.exists() and str(local_mods) not in result.extra_mod_paths:
-            result.extra_mod_paths.append(str(local_mods))
-            result.logs.append(f"Found local Mods: {local_mods}")
 
-    # Version
-    if result.rimworld_path:
-        version_file = Path(result.rimworld_path) / 'Version.txt'
-        if version_file.exists():
-            try:
-                result.rimworld_version = version_file.read_text().strip()
-                result.logs.append(f"RimWorld version: {result.rimworld_version}")
-            except Exception:
-                pass
-
-    if not result.rimworld_exe:
-        result.logs.append(
-            "Could not find RimWorld. Please set the path manually.")
-
-    return result
+def _detect_local_mods(result: DetectionResult) -> None:
+    """Add the game's local Mods folder to extra_mod_paths if it exists."""
+    if not result.rimworld_path:
+        return
+    local_mods = Path(result.rimworld_path) / 'Mods'
+    if local_mods.exists() and str(local_mods) not in result.extra_mod_paths:
+        result.extra_mod_paths.append(str(local_mods))
+        result.logs.append(f"Found local Mods: {local_mods}")
 
 
-# ── Platform helpers ──────────────────────────────────────────────────────────
+def _detect_version(result: DetectionResult) -> None:
+    """Read Version.txt from the RimWorld folder and store the version string."""
+    if not result.rimworld_path:
+        return
+    version_file = Path(result.rimworld_path) / 'Version.txt'
+    if version_file.exists():
+        try:
+            result.rimworld_version = version_file.read_text(
+                encoding='utf-8').strip()
+            result.logs.append(f"RimWorld version: {result.rimworld_version}")
+        except OSError:
+            pass
+
+
+# ── Low-level finders ─────────────────────────────────────────────────────────
 
 def _get_non_steam_paths() -> list[str]:
+    """Return the list of non-Steam install paths for the current platform."""
     system = platform.system()
     if system == 'Windows':
         return NON_STEAM_COMMON_PATHS_WIN
-    elif system == 'Darwin':
+    if system == 'Darwin':
         return []
-    else:
-        return NON_STEAM_COMMON_PATHS_LINUX
+    return NON_STEAM_COMMON_PATHS_LINUX
 
 
 def _find_steam_install() -> Optional[Path]:
+    """
+    Locate the Steam installation directory for the current platform.
+
+    Windows: checks registry keys first, then common paths.
+    Linux:   checks common paths and Flatpak locations.
+    macOS:   checks the standard Application Support location.
+    """
     system = platform.system()
 
     if system == 'Windows':
-        try:
-            import winreg
-            for key_path in [
-                r'SOFTWARE\Valve\Steam',
-                r'SOFTWARE\WOW6432Node\Valve\Steam',
-            ]:
-                try:
-                    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path)
-                    install_path, _ = winreg.QueryValueEx(key, 'InstallPath')
-                    winreg.CloseKey(key)
-                    if install_path and Path(install_path).exists():
-                        return Path(install_path)
-                except (OSError, FileNotFoundError):
-                    continue
+        return _find_steam_windows()
+    if system == 'Darwin':
+        return _find_steam_macos()
+    return _find_steam_linux()
+
+
+def _find_steam_windows() -> Optional[Path]:
+    """Locate Steam on Windows via registry, then common paths."""
+    if _WINREG is not None:
+        for hive, key_path, value in [
+            (_WINREG.HKEY_LOCAL_MACHINE,
+             r'SOFTWARE\Valve\Steam', 'InstallPath'),
+            (_WINREG.HKEY_LOCAL_MACHINE,
+             r'SOFTWARE\WOW6432Node\Valve\Steam', 'InstallPath'),
+            (_WINREG.HKEY_CURRENT_USER,
+             r'SOFTWARE\Valve\Steam', 'SteamPath'),
+        ]:
             try:
-                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                                     r'SOFTWARE\Valve\Steam')
-                steam_path, _ = winreg.QueryValueEx(key, 'SteamPath')
-                winreg.CloseKey(key)
-                if steam_path and Path(steam_path).exists():
-                    return Path(steam_path)
-            except (OSError, FileNotFoundError):
-                pass
-        except ImportError:
-            pass
-        for p in STEAM_COMMON_PATHS_WIN:
-            path = Path(p)
-            if path.exists() and (path / 'steam.exe').exists():
-                return path
-
-    elif system == 'Darwin':
-        for p in STEAM_COMMON_PATHS_MAC:
-            path = Path(p)
-            if path.exists():
-                return path
-
-    else:
-        # Linux / Steam Deck
-        for p in STEAM_COMMON_PATHS_LINUX:
-            path = Path(p)
-            if not path.exists():
+                key         = _WINREG.OpenKey(hive, key_path)
+                path_str, _ = _WINREG.QueryValueEx(key, value)
+                _WINREG.CloseKey(key)
+                candidate = Path(path_str)
+                if candidate.exists():
+                    return candidate
+            except OSError:
                 continue
-            # Check for steam executable or key subdirs
-            if ((path / 'steam.sh').exists() or
-                    (path / 'ubuntu12_32' / 'steam').exists() or
-                    (path / 'steamapps').exists()):
-                return path
+
+    for p in STEAM_COMMON_PATHS_WIN:
+        path = Path(p)
+        if path.exists() and (path / 'steam.exe').exists():
+            return path
 
     return None
 
 
+def _find_steam_macos() -> Optional[Path]:
+    """Locate Steam on macOS."""
+    for p in STEAM_COMMON_PATHS_MAC:
+        path = Path(p)
+        if path.exists():
+            return path
+    return None
+
+
+def _find_steam_linux() -> Optional[Path]:
+    """Locate Steam on Linux or Steam Deck, including Flatpak installs."""
+    for p in STEAM_COMMON_PATHS_LINUX:
+        path = Path(p)
+        if not path.exists():
+            continue
+        if ((path / 'steam.sh').exists() or
+                (path / 'ubuntu12_32' / 'steam').exists() or
+                (path / 'steamapps').exists()):
+            return path
+    return None
+
+
 def _find_steam_library_folders(steam_path: Path) -> list[Path]:
-    folders = [steam_path]
-    for vdf_name in ('libraryfolders.vdf',):
-        for sub in ('steamapps', 'config'):
-            vdf_path = steam_path / sub / vdf_name
-            if vdf_path.exists():
-                try:
-                    content = vdf_path.read_text(
-                        encoding='utf-8', errors='replace')
-                    paths = re.findall(r'"path"\s+"([^"]+)"', content)
-                    for p in paths:
-                        lib_path = Path(p.replace('\\\\', '\\'))
-                        if lib_path.exists() and lib_path not in folders:
-                            folders.append(lib_path)
-                except Exception:
-                    pass
+    """
+    Parse libraryfolders.vdf to find all Steam library locations.
+
+    Always includes steam_path itself as the primary library.
+    """
+    folders: list[Path] = [steam_path]
+    vdf_name = 'libraryfolders.vdf'
+
+    for sub in ('steamapps', 'config'):
+        vdf_path = steam_path / sub / vdf_name
+        if not vdf_path.exists():
+            continue
+        try:
+            content = vdf_path.read_text(encoding='utf-8', errors='replace')
+            for p in re.findall(r'"path"\s+"([^"]+)"', content):
+                lib_path = Path(p.replace('\\\\', '\\'))
+                if lib_path.exists() and lib_path not in folders:
+                    folders.append(lib_path)
+        except (OSError, ValueError):
+            pass
+
     return folders
 
 
 def _find_rimworld_exe(game_path: Path) -> Optional[Path]:
+    """Return the first matching RimWorld executable in game_path, or None."""
     for exe_name in RIMWORLD_EXE_NAMES:
         exe_path = game_path / exe_name
         if exe_path.exists():
@@ -293,6 +409,7 @@ def _find_rimworld_exe(game_path: Path) -> Optional[Path]:
 
 
 def _is_steam_copy(game_path: Path) -> bool:
+    """Return True if game_path appears to be a Steam installation."""
     return (
         (game_path / 'steam_api64.dll').exists() or
         (game_path / 'steam_api.dll').exists() or
@@ -301,15 +418,20 @@ def _is_steam_copy(game_path: Path) -> bool:
 
 
 def _find_workshop_path(library_folders: list[Path]) -> Optional[Path]:
+    """Search library folders for the RimWorld Workshop content directory."""
     for lib in library_folders:
-        workshop = (lib / 'steamapps' / 'workshop' /
-                    'content' / RIMWORLD_APP_ID)
+        workshop = lib / 'steamapps' / 'workshop' / 'content' / RIMWORLD_APP_ID
         if workshop.exists():
             return workshop
     return None
 
 
 def _find_steamcmd() -> Optional[Path]:
+    """
+    Locate the SteamCMD executable for the current platform.
+
+    Checks platform-specific known paths first, then falls back to PATH.
+    """
     system = platform.system()
 
     if system == 'Windows':
@@ -323,18 +445,16 @@ def _find_steamcmd() -> Optional[Path]:
     elif system == 'Darwin':
         for p in STEAMCMD_COMMON_PATHS_MAC:
             path = Path(p)
-            if path.exists() and path.is_file():
+            if path.is_file():
                 return path
     else:
-        # Linux
         for p in STEAMCMD_COMMON_PATHS_LINUX:
             path = Path(p)
-            if path.exists() and path.is_file():
+            if path.is_file():
                 return path
 
-    # Check PATH on all platforms
-    exe_name = 'steamcmd.exe' if platform.system() == 'Windows' else 'steamcmd'
-    which = shutil.which(exe_name)
+    exe_name = 'steamcmd.exe' if system == 'Windows' else 'steamcmd'
+    which    = shutil.which(exe_name)
     if which:
         return Path(which)
 
@@ -343,7 +463,12 @@ def _find_steamcmd() -> Optional[Path]:
 
 def _search_drive_for_rimworld(root: Path,
                                 max_depth: int = 3) -> Optional[Path]:
-    """Windows-only drive scan."""
+    """
+    Recursively scan a drive root for a RimWorld executable (Windows only).
+
+    Skips system and irrelevant directories for performance.
+    Only descends into directories that are likely to contain games.
+    """
     if max_depth <= 0:
         return None
     try:
@@ -351,39 +476,16 @@ def _search_drive_for_rimworld(root: Path,
             if not entry.is_dir():
                 continue
             name_lower = entry.name.lower()
-            if name_lower.startswith('.') or name_lower in (
-                'windows', 'programdata', '$recycle.bin',
-                'system volume information', 'recovery',
-                'perflogs', 'intel', 'nvidia', 'amd',
-            ):
+            if name_lower.startswith('.') or name_lower in _DRIVE_SCAN_SKIP:
                 continue
             if 'rimworld' in name_lower:
                 exe = _find_rimworld_exe(entry)
                 if exe:
                     return exe
-            if max_depth > 1 and name_lower in (
-                'games', 'steam', 'steamlibrary', 'gog games',
-                'epic games', 'program files', 'program files (x86)',
-                'steamapps', 'common',
-            ):
+            if max_depth > 1 and name_lower in _DRIVE_SCAN_DESCEND:
                 found = _search_drive_for_rimworld(entry, max_depth - 1)
                 if found:
                     return found
     except PermissionError:
         pass
-    return None
-
-
-def detect_rimworld_exe_only() -> Optional[str]:
-    result = auto_detect_all()
-    return result.rimworld_exe if result.found_rimworld else None
-
-
-def detect_steam_workshop_folder() -> Optional[str]:
-    steam = _find_steam_install()
-    if steam:
-        libs = _find_steam_library_folders(steam)
-        ws   = _find_workshop_path(libs)
-        if ws:
-            return str(ws)
     return None

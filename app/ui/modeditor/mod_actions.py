@@ -1,18 +1,21 @@
 """Add/remove/sort/vanilla/import/export actions for ModEditorDialog."""
 
 from pathlib import Path
-from PyQt6.QtWidgets import QMessageBox, QFileDialog
 
+from PyQt6.QtWidgets import QMessageBox, QFileDialog  # pylint: disable=no-name-in-module
+
+from app.core.app_settings import AppSettings
+from app.core.mod_sort import auto_sort_mods
 from app.core.modlist import (
     read_mods_config, parse_rimsort_modlist,
-    export_rimsort_modlist, get_vanilla_modlist, VANILLA_AND_DLCS,
+    export_rimsort_modlist, get_vanilla_modlist,
 )
-from app.core.mod_sort import auto_sort_mods
+from app.core.paths import mods_dir
 
 
 class ModActions:
-    """
-    Mixin for ModEditorDialog.
+    """Mixin for ModEditorDialog.
+
     Requires: self.active, self.avail, self.inst, self.rw,
               self.all_mods, self.names,
               self._defer_updates, self._filter_on,
@@ -22,6 +25,8 @@ class ModActions:
               self._apply_filter()
     """
 
+    # pylint: disable=no-member,attribute-defined-outside-init
+
     def _add_sel(self):
         selected = self.avail.selectedItems()
         if not selected:
@@ -30,7 +35,6 @@ class ModActions:
         self.active.setUpdatesEnabled(False)
         self.avail.setUpdatesEnabled(False)
 
-        # Collect mids then remove in reverse row order
         rows = sorted([self.avail.row(it) for it in selected], reverse=True)
         mids = [it.mid for it in selected]
         for row in rows:
@@ -118,15 +122,20 @@ class ModActions:
         self.active.setUpdatesEnabled(False)
         self.avail.setUpdatesEnabled(False)
 
+        # pylint: disable=protected-access
         all_items = self.active._model.allItems()
-        to_remove = [it for it in all_items
-                    if it.mid.lower() != 'ludeon.rimworld']
-        keep      = [it for it in all_items
-                    if it.mid.lower() == 'ludeon.rimworld']
+        # pylint: enable=protected-access
 
+        to_remove = [it for it in all_items
+                     if it.mid.lower() != 'ludeon.rimworld']
+        keep      = [it for it in all_items
+                     if it.mid.lower() == 'ludeon.rimworld']
+
+        # pylint: disable=protected-access
         self.active._model.beginResetModel()
         self.active._model._items = keep
         self.active._model.endResetModel()
+        # pylint: enable=protected-access
 
         for it in to_remove:
             if it.mid in self.all_mods:
@@ -158,7 +167,7 @@ class ModActions:
         self._update()
 
     def _remove_from_instance_batch(self, items: list):
-        """items is list[ModItem]"""
+        """Remove a batch of items from the avail list with confirmation."""
         if not items:
             return
         names = []
@@ -189,9 +198,6 @@ class ModActions:
         ids = self.active.get_ids()
         if not ids:
             return
-        from app.core.app_settings import AppSettings
-        from app.core.paths import mods_dir
-        from pathlib import Path
         _s    = AppSettings.instance()
         paths = []
         if _s.data_root:
@@ -202,7 +208,7 @@ class ModActions:
             extra_mod_paths=paths,
             force_rescan=True,
             max_age_seconds=0)
-        sorted_ids    = auto_sort_mods(ids, self.rw)
+        sorted_ids = auto_sort_mods(ids, self.rw)
         self.active.clear()
         self._batch_load_active(sorted_ids)
         self._update()
@@ -217,8 +223,9 @@ class ModActions:
             if mid in set(self.active.get_ids()):
                 continue
             self._mk_active(mid)
-            # Remove from avail if present
+            # pylint: disable=protected-access
             idx = self.avail._model.indexOfMid(mid)
+            # pylint: enable=protected-access
             if idx >= 0:
                 self.avail.takeItem(idx)
         self.active.apply_item_widgets()
@@ -241,7 +248,9 @@ class ModActions:
             if mid in active_set:
                 continue
             self._mk_active(mid)
+            # pylint: disable=protected-access
             idx = self.avail._model.indexOfMid(mid)
+            # pylint: enable=protected-access
             if idx >= 0:
                 self.avail.takeItem(idx)
         self.active.apply_item_widgets()
@@ -253,3 +262,5 @@ class ModActions:
             self, "Export", "modlist.txt", "Text (*.txt)")
         if p:
             export_rimsort_modlist(p, self.active.get_ids(), self.names)
+
+    # pylint: enable=no-member,attribute-defined-outside-init

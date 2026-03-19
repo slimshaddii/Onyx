@@ -12,22 +12,23 @@ Templates
 6  Import from .onyx pack
 """
 
-import os
 from pathlib import Path
-from PyQt6.QtWidgets import (
+
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTextEdit, QComboBox, QFileDialog, QMessageBox,
     QWidget,
 )
-from PyQt6.QtCore import Qt
 
 from app.core.instance import Instance
 from app.core.instance_manager import InstanceManager
+from app.core.modlist import parse_rimsort_modlist, read_mods_config
 from app.core.rimworld import RimWorldDetector
-from app.core.modlist import parse_rimsort_modlist
 
 
 class NewInstanceDialog(QDialog):
+    """Dialog for creating a new instance from one of several templates."""
+
     def __init__(self, parent, rw: RimWorldDetector,
                  mgr: InstanceManager, dl_queue=None):
         super().__init__(parent)
@@ -37,8 +38,6 @@ class NewInstanceDialog(QDialog):
         self.setWindowTitle("New Instance")
         self.setMinimumWidth(480)
         self._build()
-
-    # ── UI ────────────────────────────────────────────────────────────────
 
     def _build(self):
         lo = QVBoxLayout(self)
@@ -62,7 +61,6 @@ class NewInstanceDialog(QDialog):
         self.tmpl.currentIndexChanged.connect(self._on_tmpl_changed)
         lo.addWidget(self.tmpl)
 
-        # File-picker row (templates 2, 3, 6)
         self.import_row = QWidget()
         ir = QHBoxLayout(self.import_row)
         ir.setContentsMargins(0, 0, 0, 0)
@@ -75,7 +73,6 @@ class NewInstanceDialog(QDialog):
         self.import_row.hide()
         lo.addWidget(self.import_row)
 
-        # Instance-picker row (template 4)
         self.copy_row = QWidget()
         cr = QHBoxLayout(self.copy_row)
         cr.setContentsMargins(0, 0, 0, 0)
@@ -119,13 +116,10 @@ class NewInstanceDialog(QDialog):
         if p:
             self.import_path.setText(p)
 
-    # ── Creation dispatch ─────────────────────────────────────────────────
-
     def _create(self):
         idx   = self.tmpl.currentIndex()
         notes = self.notes_in.toPlainText().strip()
 
-        # .onyx import delegates to its own dialog
         if idx == 6:
             return self._create_from_onyx()
 
@@ -146,10 +140,8 @@ class NewInstanceDialog(QDialog):
         try:
             handlers[idx](name, notes)
             self.accept()
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             QMessageBox.critical(self, "Error", str(e))
-
-    # ── Per-template creators ─────────────────────────────────────────────
 
     def _create_vanilla(self, name: str, notes: str):
         self.mgr.create_vanilla_instance(name)
@@ -173,7 +165,6 @@ class NewInstanceDialog(QDialog):
         p = self._require_path()
         if p is None:
             return
-        from app.core.modlist import read_mods_config
         mods, ver, _ = read_mods_config(Path(p).parent)
         self.mgr.create_instance(name, mods=mods, version=ver, notes=notes)
 
@@ -194,13 +185,11 @@ class NewInstanceDialog(QDialog):
         if not p:
             QMessageBox.warning(self, "Error", "Select an .onyx file.")
             return
-        from app.ui.onyxpack_dialog import OnyxImportDialog
+        from app.ui.onyxpack_dialog import OnyxImportDialog  # pylint: disable=import-outside-toplevel
         dlg = OnyxImportDialog(self, Path(p), self.rw, self.mgr,
                                dl_queue=self.dl_queue)
         if dlg.exec():
             self.accept()
-
-    # ── Helpers ───────────────────────────────────────────────────────────
 
     def _require_path(self) -> str | None:
         """Return the import path or show a warning and return None."""

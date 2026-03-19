@@ -5,26 +5,32 @@ Filters: Latest, Has Update, Last Updated, Name.
 """
 
 import os
+import shutil
 import subprocess
 import threading
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtWidgets import (
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
     QSplitter, QWidget, QGroupBox, QGridLayout, QComboBox,
     QScrollArea, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer  # pylint: disable=no-name-in-module
+from PyQt6.QtGui import QPixmap, QColor  # pylint: disable=no-name-in-module
 
+from app.core.mod_update_checker import ModTimestampStore, check_updates
 from app.core.rimworld import ModInfo
+from app.core.steam_integration import open_workshop_page
 from app.core.app_settings import AppSettings
 from app.ui.styles import get_colors
+from app.utils.file_utils import get_folder_size, human_size
 
 
 class ModLibraryDialog(QDialog):
+    """Browse, manage, and delete mods downloaded to the Onyx mods directory."""
+
     mod_deleted    = pyqtSignal(str)
     mod_redownload = pyqtSignal(str, str)
 
@@ -34,9 +40,8 @@ class ModLibraryDialog(QDialog):
         self.mods_dir         = onyx_mods_dir
         self.download_manager = download_manager
 
-        # (workshop_id, name, path, info, mtime)
-        self._mods:    list[tuple[str, str, Path, ModInfo | None, float]] = []
-        self._has_updates: set[str] = set()   # workshop_ids with updates
+        self._mods:        list[tuple[str, str, Path, ModInfo | None, float]] = []
+        self._has_updates: set[str] = set()
 
         self.setWindowTitle("Mod Library")
         self.setMinimumSize(900, 580)
@@ -45,14 +50,11 @@ class ModLibraryDialog(QDialog):
         self._load()
         self._check_updates_async()
 
-    # ── Build ─────────────────────────────────────────────────────────────
-
     def _build(self):
         c  = get_colors(AppSettings.instance().theme)
         lo = QVBoxLayout(self)
         lo.setSpacing(6)
 
-        # ── Top bar: search + filter + count ──────────────────────────────
         top = QHBoxLayout()
         top.setSpacing(6)
 
@@ -64,19 +66,19 @@ class ModLibraryDialog(QDialog):
 
         top.addWidget(QLabel("Sort:"))
         self._sort_cb = QComboBox()
-        self._sort_cb.addItem("Name A-Z",       "name_asc")
-        self._sort_cb.addItem("Name Z-A",       "name_desc")
-        self._sort_cb.addItem("Last Updated",   "mtime_desc")
-        self._sort_cb.addItem("Oldest First",   "mtime_asc")
+        self._sort_cb.addItem("Name A-Z",     "name_asc")
+        self._sort_cb.addItem("Name Z-A",     "name_desc")
+        self._sort_cb.addItem("Last Updated", "mtime_desc")
+        self._sort_cb.addItem("Oldest First", "mtime_asc")
         self._sort_cb.currentIndexChanged.connect(self._apply_filter)
         top.addWidget(self._sort_cb)
 
         top.addWidget(QLabel("Filter:"))
         self._filter_cb = QComboBox()
-        self._filter_cb.addItem("All Mods",       "all")
-        self._filter_cb.addItem("Has Update",     "update")
-        self._filter_cb.addItem("Workshop Mods",  "workshop")
-        self._filter_cb.addItem("Local Mods",     "local")
+        self._filter_cb.addItem("All Mods",      "all")
+        self._filter_cb.addItem("Has Update",    "update")
+        self._filter_cb.addItem("Workshop Mods", "workshop")
+        self._filter_cb.addItem("Local Mods",    "local")
         self._filter_cb.currentIndexChanged.connect(self._apply_filter)
         top.addWidget(self._filter_cb)
 
@@ -86,10 +88,7 @@ class ModLibraryDialog(QDialog):
 
         lo.addLayout(top)
 
-        # ── Splitter: list | detail ───────────────────────────────────────
-        sp = QSplitter(Qt.Orientation.Horizontal)
-
-        # Left — mod list
+        sp   = QSplitter(Qt.Orientation.Horizontal)
         left = QWidget()
         ll   = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
@@ -101,26 +100,22 @@ class ModLibraryDialog(QDialog):
         ll.addWidget(self._list, 1)
         sp.addWidget(left)
 
-        # Right — detail panel
         right = QWidget()
         rl    = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(6)
 
-        # Preview image — expands vertically
         self._preview_lbl = QLabel()
         self._preview_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview_lbl.setMinimumHeight(120)
         self._preview_lbl.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding)
-        c = get_colors(AppSettings.instance().theme)
         self._preview_lbl.setStyleSheet(
             f"background:{c['bg_mid']}; border-radius:6px;")
         self._preview_lbl.setText("No preview")
-        rl.addWidget(self._preview_lbl, 2)   # stretch factor 2
+        rl.addWidget(self._preview_lbl, 2)
 
-        # Mod info grid — fixed height
         info_group = QGroupBox("Mod Info")
         ig         = QGridLayout()
         ig.setVerticalSpacing(3)
@@ -142,9 +137,8 @@ class ModLibraryDialog(QDialog):
             ig.addWidget(val, row, 1)
             self._detail[key] = val
         info_group.setLayout(ig)
-        rl.addWidget(info_group, 0)   # no stretch — fixed height
+        rl.addWidget(info_group, 0)
 
-        # Description — expands to fill remaining space
         desc_group = QGroupBox("Description")
         desc_lo    = QVBoxLayout()
         desc_lo.setContentsMargins(6, 6, 6, 6)
@@ -163,16 +157,14 @@ class ModLibraryDialog(QDialog):
         desc_scroll.setStyleSheet("QScrollArea { border:none; }")
         desc_lo.addWidget(desc_scroll)
         desc_group.setLayout(desc_lo)
-        rl.addWidget(desc_group, 1)   # stretch factor 1
+        rl.addWidget(desc_group, 1)
 
-        # Update badge
         self._update_lbl = QLabel("")
         self._update_lbl.setStyleSheet(
             f"color:{c['warning']}; font-weight:bold; font-size:10px;")
         self._update_lbl.hide()
         rl.addWidget(self._update_lbl, 0)
 
-        # Action buttons — fixed at bottom, no stretch above them
         btn_row = QHBoxLayout()
         btn_row.setSpacing(4)
         self._folder_btn = QPushButton("Open Folder")
@@ -201,15 +193,12 @@ class ModLibraryDialog(QDialog):
         sp.setSizes([380, 580])
         lo.addWidget(sp, 1)
 
-        # Bottom
         btns = QHBoxLayout()
         btns.addStretch()
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
         btns.addWidget(close_btn)
         lo.addLayout(btns)
-
-    # ── Load ─────────────────────────────────────────────────────────────
 
     def _load(self):
         self._mods.clear()
@@ -219,39 +208,34 @@ class ModLibraryDialog(QDialog):
             self._count_lbl.setText("0 mods")
             return
 
-        import shutil
         for d in sorted(self.mods_dir.iterdir()):
             if not d.is_dir():
                 continue
 
-            # Delete completely empty folders — incomplete downloads
             try:
                 contents = list(d.iterdir())
-            except Exception:
+            except OSError:
                 continue
 
             if not contents:
                 try:
                     d.rmdir()
-                except Exception:
+                except OSError:
                     pass
                 continue
 
             info = ModInfo.from_path(d, 'workshop')
 
-            # No valid About.xml — check if it has any meaningful files
             if info is None:
                 has_meaningful = any(
                     f.suffix.lower() in ('.xml', '.dll', '.png', '.jpg', '.txt')
                     for f in d.rglob('*') if f.is_file())
                 if not has_meaningful:
-                    # Leftover incomplete download — delete silently
                     try:
                         shutil.rmtree(str(d))
-                    except Exception:
+                    except OSError:
                         pass
                     continue
-                # Has files but no About.xml — show folder name
                 name = d.name
                 wid  = d.name
             else:
@@ -260,7 +244,7 @@ class ModLibraryDialog(QDialog):
 
             try:
                 mtime = d.stat().st_mtime
-            except Exception:
+            except OSError:
                 mtime = 0.0
 
             self._mods.append((wid, name, d, info, mtime))
@@ -272,8 +256,6 @@ class ModLibraryDialog(QDialog):
             f"{len(self._mods)} mod{'s' if len(self._mods) != 1 else ''}")
         self._apply_filter()
 
-    # ── Async update check ────────────────────────────────────────────────
-
     def _check_updates_async(self):
         dr = AppSettings.instance().data_root
         if not dr:
@@ -281,8 +263,6 @@ class ModLibraryDialog(QDialog):
 
         def _run():
             try:
-                from app.core.mod_update_checker import (
-                    ModTimestampStore, check_updates)
                 store      = ModTimestampStore(Path(dr))
                 ws_ids     = [m[0] for m in self._mods if m[0].isdigit()]
                 names      = {m[0]: m[1] for m in self._mods if m[0].isdigit()}
@@ -292,7 +272,7 @@ class ModLibraryDialog(QDialog):
                 update_ids = {r.workshop_id for r in results if r.has_update}
                 QTimer.singleShot(
                     0, lambda ids=update_ids: self._mark_updates(ids))
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 pass
 
         threading.Thread(target=_run, daemon=True).start()
@@ -306,19 +286,14 @@ class ModLibraryDialog(QDialog):
             if idx is not None and idx < len(self._mods):
                 wid = self._mods[idx][0]
                 if wid in self._has_updates:
-                    it.setForeground(
-                        __import__('PyQt6.QtGui', fromlist=['QColor'])
-                        .QColor(c['warning']))
+                    it.setForeground(QColor(c['warning']))
         self._apply_filter()
-
-    # ── Filter + Sort ─────────────────────────────────────────────────────
 
     def _apply_filter(self):
         q          = self._search.text().lower()
         sort_key   = self._sort_cb.currentData()
         filter_key = self._filter_cb.currentData()
 
-        # Collect matching mods
         visible: list[tuple[int, str, str, Path, ModInfo | None, float]] = []
         for idx, (wid, name, path, info, mtime) in enumerate(self._mods):
             if q and q not in name.lower():
@@ -331,7 +306,6 @@ class ModLibraryDialog(QDialog):
                 continue
             visible.append((idx, wid, name, path, info, mtime))
 
-        # Sort
         if sort_key == 'name_asc':
             visible.sort(key=lambda x: x[2].lower())
         elif sort_key == 'name_desc':
@@ -341,16 +315,16 @@ class ModLibraryDialog(QDialog):
         elif sort_key == 'mtime_asc':
             visible.sort(key=lambda x: x[5])
 
-        # Rebuild list in sorted order
+        c = get_colors(AppSettings.instance().theme)
+        warning_color = QColor(c['warning'])
+
         self._list.setUpdatesEnabled(False)
         self._list.clear()
         for idx, wid, name, path, info, mtime in visible:
             it = QListWidgetItem(f"📦  {name}")
             it.setData(Qt.ItemDataRole.UserRole, idx)
             if wid in self._has_updates:
-                from PyQt6.QtGui import QColor
-                c = get_colors(AppSettings.instance().theme)
-                it.setForeground(QColor(c['warning']))
+                it.setForeground(warning_color)
             self._list.addItem(it)
         self._list.setUpdatesEnabled(True)
 
@@ -360,12 +334,7 @@ class ModLibraryDialog(QDialog):
         self._count_lbl.setText(
             f"{len(visible)}/{len(self._mods)} mods{suffix}")
 
-    # ── Selection ─────────────────────────────────────────────────────────
-
     def _on_select(self, row: int):
-        c = get_colors(AppSettings.instance().theme)
-
-        # Disable buttons on invalid selection
         if row < 0 or row >= self._list.count():
             for btn in (self._folder_btn, self._ws_btn,
                         self._redl_btn, self._del_btn):
@@ -373,7 +342,7 @@ class ModLibraryDialog(QDialog):
             self._update_lbl.hide()
             return
 
-        it  = self._list.item(row)
+        it = self._list.item(row)
         if it is None:
             return
         idx = it.data(Qt.ItemDataRole.UserRole)
@@ -382,7 +351,6 @@ class ModLibraryDialog(QDialog):
 
         wid, name, path, info, mtime = self._mods[idx]
 
-        # Preview image
         preview_path = (Path(info.preview_image)
                         if info and info.preview_image else None)
         if preview_path and preview_path.exists():
@@ -401,7 +369,6 @@ class ModLibraryDialog(QDialog):
             self._preview_lbl.clear()
             self._preview_lbl.setText("No preview")
 
-        # Mod info
         self._detail['Name'].setText(name)
         self._detail['Author'].setText(
             info.author if info and info.author else '—')
@@ -409,43 +376,37 @@ class ModLibraryDialog(QDialog):
             ', '.join(info.supported_versions)
             if info and info.supported_versions else '—')
         self._detail['Workshop ID'].setText(wid or '—')
-        self._detail['Source'].setText(
-            info.source if info else '—')
+        self._detail['Source'].setText(info.source if info else '—')
 
         try:
             dt = datetime.fromtimestamp(mtime).strftime("%b %d, %Y  %H:%M")
-        except Exception:
+        except (ValueError, OSError):
             dt = '—'
         self._detail['Last Updated'].setText(dt)
         self._detail['Path'].setText(str(path))
 
-        # Size — async
         self._detail['Size'].setText('…')
         _path = path
         _lbl  = self._detail['Size']
 
         def _calc():
-            from app.utils.file_utils import get_folder_size, human_size
             try:
                 text = human_size(get_folder_size(_path))
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 text = '—'
             QTimer.singleShot(0, lambda: _lbl.setText(text))
 
         threading.Thread(target=_calc, daemon=True).start()
 
-        # Description
         desc = info.description[:500] if info and info.description else ''
         self._desc_lbl.setText(desc or 'No description.')
 
-        # Update badge
         if wid in self._has_updates:
             self._update_lbl.setText("Update available on Workshop")
             self._update_lbl.show()
         else:
             self._update_lbl.hide()
 
-        # Buttons
         self._folder_btn.setEnabled(True)
         self._ws_btn.setEnabled(bool(wid and wid.isdigit()))
         self._redl_btn.setEnabled(
@@ -464,14 +425,11 @@ class ModLibraryDialog(QDialog):
             return
 
         if count == 1:
-            # Single select — full button state from _on_select
             return
 
-        # Multi-select — only bulk actions available
-        self._folder_btn.setEnabled(False)   # folder only for single
-        self._ws_btn.setEnabled(False)        # workshop page only for single
+        self._folder_btn.setEnabled(False)
+        self._ws_btn.setEnabled(False)
 
-        # Redownload: only if all selected have workshop IDs
         all_have_ws = all(
             self._mods[it.data(Qt.ItemDataRole.UserRole)][0].isdigit()
             for it in selected
@@ -481,21 +439,18 @@ class ModLibraryDialog(QDialog):
             all_have_ws and self.download_manager is not None)
         self._del_btn.setEnabled(True)
 
-        # Update detail panel to show selection count
         self._preview_lbl.clear()
         self._preview_lbl.setText(f"{count} mods selected")
-        for key in self._detail:
-            self._detail[key].setText('—')
+        for _, val in self._detail.items():
+            val.setText('—')
         self._desc_lbl.setText('')
         self._update_lbl.hide()
-
-    # ── Actions ───────────────────────────────────────────────────────────
 
     def _selected(self) -> tuple | None:
         row = self._list.currentRow()
         if row < 0:
             return None
-        it  = self._list.item(row)
+        it = self._list.item(row)
         if not it:
             return None
         idx = it.data(Qt.ItemDataRole.UserRole)
@@ -517,9 +472,7 @@ class ModLibraryDialog(QDialog):
         sel = self._selected()
         if not sel:
             return
-        wid = sel[0]
-        from app.core.steam_integration import open_workshop_page
-        open_workshop_page(wid)
+        open_workshop_page(sel[0])
 
     def _redownload(self):
         if not self.download_manager:
@@ -545,7 +498,6 @@ class ModLibraryDialog(QDialog):
         if not selected:
             return
 
-        # Collect mods to delete
         to_delete: list[tuple[str, str, Path]] = []
         for it in selected:
             idx = it.data(Qt.ItemDataRole.UserRole)
@@ -574,7 +526,6 @@ class ModLibraryDialog(QDialog):
         ) != QMessageBox.StandardButton.Yes:
             return
 
-        import shutil
         errors: list[str] = []
         dr = AppSettings.instance().data_root
 
@@ -583,12 +534,11 @@ class ModLibraryDialog(QDialog):
                 shutil.rmtree(str(path))
                 self.mod_deleted.emit(wid)
                 try:
-                    from app.core.mod_update_checker import ModTimestampStore
                     if dr:
                         ModTimestampStore(Path(dr)).remove(wid)
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     pass
-            except Exception as e:
+            except OSError as e:
                 errors.append(f"{name}: {e}")
 
         if errors:
@@ -599,9 +549,9 @@ class ModLibraryDialog(QDialog):
 
         self._load()
 
-    def resizeEvent(self, e):
+    def resizeEvent(self, e):  # pylint: disable=invalid-name
+        """Reload the preview image at the correct size when the dialog resizes."""
         super().resizeEvent(e)
-        # Reload preview at correct size when dialog resizes
         row = self._list.currentRow()
         if row >= 0:
             QTimer.singleShot(0, lambda: self._on_select(row))

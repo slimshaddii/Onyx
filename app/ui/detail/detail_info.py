@@ -8,18 +8,17 @@ to mod/instance health info.
 
 import threading
 from datetime import datetime
-from PyQt6.QtWidgets import (
+
+from PyQt6.QtCore import QTimer  # pylint: disable=no-name-in-module
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QWidget, QVBoxLayout, QLabel, QGroupBox, QGridLayout,
 )
-from PyQt6.QtCore import QTimer
-
-from app.core.instance import Instance
-from app.core.rimworld import RimWorldDetector
-from app.utils.file_utils import human_size, get_folder_size
 
 from app.core.app_settings import AppSettings
+from app.core.instance import Instance
+from app.core.rimworld import RimWorldDetector
 from app.ui.styles import get_colors
-
+from app.utils.file_utils import human_size, get_folder_size
 
 _ROWS = (
     'Version', 'Active Mods', 'Inactive Mods', 'Save Files',
@@ -28,13 +27,18 @@ _ROWS = (
 
 
 class DetailInfo(QWidget):
+    """
+    Displays a Details grid with instance metadata and a missing-mods warning.
+
+    The Instance Size field is populated asynchronously to avoid blocking the UI.
+    """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         lo = QVBoxLayout(self)
         lo.setContentsMargins(0, 0, 0, 0)
         lo.setSpacing(4)
 
-        # ── Details grid ──────────────────────────────────────────────────
         det_group = QGroupBox("Details")
         grid      = QGridLayout()
         grid.setVerticalSpacing(6)
@@ -43,8 +47,7 @@ class DetailInfo(QWidget):
         c = get_colors(AppSettings.instance().theme)
         for row, key in enumerate(_ROWS):
             lbl = QLabel(f"{key}:")
-            lbl.setStyleSheet(
-                f"font-weight:bold; color:{c['text_dim']};")
+            lbl.setStyleSheet(f"font-weight:bold; color:{c['text_dim']};")
             val = QLabel("—")
             grid.addWidget(lbl, row, 0)
             grid.addWidget(val, row, 1)
@@ -53,16 +56,14 @@ class DetailInfo(QWidget):
         det_group.setLayout(grid)
         lo.addWidget(det_group)
 
-        # ── Missing mods warning ──────────────────────────────────────────
         self.missing_label = QLabel("")
         self.missing_label.setStyleSheet("color:#c62828; font-weight:bold;")
         self.missing_label.setWordWrap(True)
         self.missing_label.hide()
         lo.addWidget(self.missing_label)
 
-    # ── Public API ────────────────────────────────────────────────────────
-
-    def set_instance(self, inst: Instance, rw: RimWorldDetector | None):
+    def set_instance(self, inst: Instance, rw: RimWorldDetector | None) -> None:
+        """Populate all fields from inst, triggering an async size calculation."""
         d = self._labels
         d['Version'].setText(inst.rimworld_version or '—')
         d['Active Mods'].setText(str(inst.mod_count))
@@ -76,32 +77,31 @@ class DetailInfo(QWidget):
         self._start_size_calc(inst.path, d['Instance Size'])
         self._update_missing(inst, rw)
 
-    def clear(self):
+    def clear(self) -> None:
+        """Reset all fields to '—' and hide the missing-mods warning."""
         for lbl in self._labels.values():
             lbl.setText('—')
         self.missing_label.hide()
 
-    # ── Internals ─────────────────────────────────────────────────────────
-
-    def _start_size_calc(self, path, size_label: QLabel):
-        """Calculate folder size on a daemon thread; marshal result to main thread."""
+    def _start_size_calc(self, path, size_label: QLabel) -> None:
+        """Calculate folder size on a daemon thread and update size_label on completion."""
         size_label.setText('…')
 
         def _calc():
             try:
                 text = human_size(get_folder_size(path))
-            except Exception:
+            except (OSError, TypeError):
                 text = '—'
             QTimer.singleShot(0, lambda: size_label.setText(text))
 
         threading.Thread(target=_calc, daemon=True).start()
 
-    def _update_missing(self, inst: Instance, rw: RimWorldDetector | None):
+    def _update_missing(self, inst: Instance, rw: RimWorldDetector | None) -> None:
         if rw and inst.mods:
             missing = rw.find_missing_mods(inst.mods)
             if missing:
                 short = ", ".join(missing[:8])
-                extra = (f" +{len(missing)-8} more" if len(missing) > 8 else "")
+                extra = f" +{len(missing) - 8} more" if len(missing) > 8 else ""
                 self.missing_label.setText(
                     f"⚠ {len(missing)} mod(s) missing: {short}{extra}")
                 self.missing_label.show()

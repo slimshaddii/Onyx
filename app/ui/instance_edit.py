@@ -3,24 +3,41 @@ Edit Instance window.
 Tabs: Overview, Mods, Saves, Notes, Log, Settings, Ignored Deps
 """
 
-from pathlib import Path
+import os
+import platform
+import subprocess
+import threading
 from datetime import datetime
-from PyQt6.QtWidgets import (
+from pathlib import Path
+
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QLabel, QPushButton, QTextEdit, QListWidget, QListWidgetItem,
     QGroupBox, QGridLayout, QLineEdit, QCheckBox, QMessageBox,
     QFileDialog, QScrollArea, QFrame, QInputDialog,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer  # pylint: disable=no-name-in-module
+
 from app.core.instance import Instance
-from app.core.rimworld import RimWorldDetector
 from app.core.launcher import Launcher
 from app.core.log_parser import LogParser
 from app.core.modlist import read_mods_config, export_rimsort_modlist
+from app.core.rimworld import RimWorldDetector
 from app.utils.file_utils import human_size, get_folder_size
+
+_SEV_ICON: dict[str, str] = {
+    'error':       '❌',
+    'dep':         '📦',
+    'warning':     '⚠',
+    'order':       '🔃',
+    'performance': '🐢',
+    'info':        'ℹ',
+}
 
 
 class InstanceEditDialog(QDialog):
+    """Dialog for editing instance settings across multiple tabs."""
+
     instance_changed = pyqtSignal()
 
     def __init__(self, parent, instance: Instance,
@@ -31,9 +48,22 @@ class InstanceEditDialog(QDialog):
         self.setWindowTitle(f"Edit — {instance.name}")
         self.setMinimumSize(700, 520)
         self.resize(760, 580)
-        self._build()
 
-    # ── Build ─────────────────────────────────────────────────────────────
+        self._ig:                   QGridLayout | None = None
+        self.mod_list:              QListWidget | None = None
+        self.saves_list:            QListWidget | None = None
+        self._save_files:           list        | None = None
+        self.notes_edit:            QTextEdit   | None = None
+        self._settings_arg_cbs:     list        | None = None
+        self._settings_arg_inputs:  dict        | None = None
+        self._custom_args:          QLineEdit   | None = None
+        self._remember_cb:          QCheckBox   | None = None
+        self.group_edit:            QLineEdit   | None = None
+        self._exe_override:         QLineEdit   | None = None
+        self._ignored_container:    QWidget     | None = None
+        self._ignored_layout:       QVBoxLayout | None = None
+
+        self._build()
 
     def _build(self):
         lo = QVBoxLayout(self)
@@ -54,7 +84,7 @@ class InstanceEditDialog(QDialog):
         tabs.addTab(self._build_notes_tab(),    "Notes")
         tabs.addTab(self._build_log_tab(),      "📋 Log")
         tabs.addTab(self._build_settings_tab(), "⚙ Settings")
-        tabs.addTab(self._build_ignored_tab(),  "🚫 Ignored Deps")
+        tabs.addTab(self._build_ignored_tab(),  "🚫 Ignored Warnings")
         lo.addWidget(tabs)
 
         btns = QHBoxLayout()
@@ -67,8 +97,6 @@ class InstanceEditDialog(QDialog):
         save_btn.clicked.connect(self._save)
         btns.addWidget(save_btn)
         lo.addLayout(btns)
-
-    # ── Overview tab ──────────────────────────────────────────────────────
 
     def _build_overview_tab(self) -> QWidget:
         w  = QWidget()
@@ -88,7 +116,7 @@ class InstanceEditDialog(QDialog):
                 f"{self.inst.total_playtime_minutes % 60}m"),
             'Size': '…',
         }
-        self._ig = ig  # keep ref for size update
+        self._ig = ig
         for r, (k, v) in enumerate(fields.items()):
             ig.addWidget(QLabel(f"<b>{k}:</b>"), r, 0)
             vl = QLabel(v)
@@ -100,16 +128,14 @@ class InstanceEditDialog(QDialog):
         lo.addWidget(info)
         lo.addStretch()
 
-        import threading
         def _calc():
             try:
                 size = human_size(get_folder_size(self.inst.path))
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 size = '—'
-            from PyQt6.QtCore import QTimer
             QTimer.singleShot(0, lambda: self._set_size_label(size))
-        threading.Thread(target=_calc, daemon=True).start()
 
+        threading.Thread(target=_calc, daemon=True).start()
         return w
 
     def _set_size_label(self, text: str):
@@ -121,8 +147,6 @@ class InstanceEditDialog(QDialog):
                 if val and val.widget():
                     val.widget().setText(text)
                 break
-
-    # ── Mods tab ──────────────────────────────────────────────────────────
 
     def _build_mods_tab(self) -> QWidget:
         w  = QWidget()
@@ -155,13 +179,11 @@ class InstanceEditDialog(QDialog):
         lo.addLayout(mod_btns)
         return w
 
-    # ── Saves tab ─────────────────────────────────────────────────────────
-
     def _build_saves_tab(self) -> QWidget:
         w  = QWidget()
         lo = QVBoxLayout(w)
 
-        self.saves_list = QListWidget()
+        self.saves_list  = QListWidget()
         self._save_files = self.inst.get_save_files()
         self._populate_saves_list()
 
@@ -191,12 +213,11 @@ class InstanceEditDialog(QDialog):
 
     def _populate_saves_list(self):
         self.saves_list.clear()
-        from app.utils.file_utils import human_size
         for s in self._save_files:
             try:
                 dt = datetime.fromisoformat(
                     s['modified']).strftime("%b %d %H:%M")
-            except Exception:
+            except ValueError:
                 dt = s['modified'][:16]
             self.saves_list.addItem(
                 f"📄 {s['name']}  —  {human_size(s['size'])}  —  {dt}")
@@ -229,12 +250,11 @@ class InstanceEditDialog(QDialog):
 
         try:
             old_path.rename(new_path)
-            # Update internal record
             self._save_files[row]['name'] = new_name
             self._save_files[row]['path'] = str(new_path)
             self._populate_saves_list()
             self.saves_list.setCurrentRow(row)
-        except Exception as e:
+        except OSError as e:
             QMessageBox.critical(self, "Rename Failed", str(e))
 
     def _delete_selected_save(self):
@@ -257,10 +277,8 @@ class InstanceEditDialog(QDialog):
             Path(s['path']).unlink()
             self.saves_list.takeItem(row)
             self._save_files.pop(row)
-        except Exception as e:
+        except OSError as e:
             QMessageBox.critical(self, "Delete Failed", str(e))
-
-    # ── Notes tab ─────────────────────────────────────────────────────────
 
     def _build_notes_tab(self) -> QWidget:
         w  = QWidget()
@@ -271,8 +289,6 @@ class InstanceEditDialog(QDialog):
             "Write notes about this instance…")
         lo.addWidget(self.notes_edit)
         return w
-
-    # ── Log tab ───────────────────────────────────────────────────────────
 
     def _build_log_tab(self) -> QWidget:
         w  = QWidget()
@@ -289,7 +305,7 @@ class InstanceEditDialog(QDialog):
                 log_view.setStyleSheet(
                     "font-family:Consolas; font-size:10px;")
                 lo.addWidget(log_view)
-            except Exception:
+            except OSError:
                 lo.addWidget(QLabel("Could not read log file."))
         else:
             lo.addWidget(QLabel(
@@ -300,25 +316,19 @@ class InstanceEditDialog(QDialog):
         lo.addWidget(open_log_btn)
         return w
 
-    # ── Settings tab ─────────────────────────────────────────────────────
-
     def _build_settings_tab(self) -> QWidget:
-        """
-        Mirrors the launch-dialog checkboxes so the user can pre-configure
-        arguments without launching. Also carries the remember / skip flag.
-        """
+        """Mirrors the launch-dialog checkboxes for pre-configuring launch args."""
         w  = QWidget()
         lo = QVBoxLayout(w)
         lo.setSpacing(8)
 
-        # ── Launch-arg checkboxes (same source as LaunchDialog) ───────────
         common = Launcher.get_common_launch_args()
 
         args_group = QGroupBox("Launch Arguments")
         ag_lo      = QVBoxLayout()
 
-        self._settings_arg_cbs:    list[tuple[QCheckBox, dict]] = []
-        self._settings_arg_inputs: dict[str, QLineEdit]         = {}
+        self._settings_arg_cbs    = []
+        self._settings_arg_inputs = {}
 
         current_args = set(self.inst.launch_args)
 
@@ -334,7 +344,6 @@ class InstanceEditDialog(QDialog):
                 vi = QLineEdit()
                 vi.setFixedWidth(80)
                 vi.setPlaceholderText(a.get('default', ''))
-                # Find existing value in saved args
                 args_list = self.inst.launch_args
                 if a['arg'] in args_list:
                     try:
@@ -350,7 +359,6 @@ class InstanceEditDialog(QDialog):
             self._settings_arg_cbs.append((cb, a))
             ag_lo.addLayout(row)
 
-        # Custom args (anything not in common)
         ag_lo.addWidget(QLabel("Custom arguments:"))
         self._custom_args = QLineEdit()
         self._custom_args.setPlaceholderText("Extra arguments…")
@@ -370,7 +378,6 @@ class InstanceEditDialog(QDialog):
         args_group.setLayout(ag_lo)
         lo.addWidget(args_group)
 
-        # ── Remember / skip dialog flag ───────────────────────────────────
         self._remember_cb = QCheckBox(
             "Skip launch dialog (use these arguments directly)")
         self._remember_cb.setToolTip(
@@ -379,7 +386,6 @@ class InstanceEditDialog(QDialog):
         self._remember_cb.setChecked(self.inst.mods_configured)
         lo.addWidget(self._remember_cb)
 
-        # ── Group / tag ───────────────────────────────────────────────────
         lo.addWidget(QLabel("Group / Tag:"))
         self.group_edit = QLineEdit()
         self.group_edit.setText(self.inst.group or '')
@@ -392,7 +398,6 @@ class InstanceEditDialog(QDialog):
             "-screen-width 1920, -screen-height 1080, -force-d3d11"
             "</small>"))
 
-        # ── RimWorld exe override ─────────────────────────────────────────
         exe_group = QGroupBox("RimWorld Override (Multi-version)")
         exe_lo    = QVBoxLayout()
         exe_lo.addWidget(QLabel(
@@ -411,7 +416,7 @@ class InstanceEditDialog(QDialog):
         exe_row.addWidget(browse_exe)
         clear_exe = QPushButton("Clear")
         clear_exe.setFixedWidth(50)
-        clear_exe.clicked.connect(lambda: self._exe_override.clear())
+        clear_exe.clicked.connect(self._exe_override.clear)
         exe_row.addWidget(clear_exe)
         exe_lo.addLayout(exe_row)
         exe_group.setLayout(exe_lo)
@@ -420,25 +425,18 @@ class InstanceEditDialog(QDialog):
         lo.addStretch()
         return w
 
-    # ── Ignored deps tab ──────────────────────────────────────────────────
-
     def _build_ignored_tab(self) -> QWidget:
-        """
-        Shows all suppressed dependency warnings for this instance.
-        Format per entry: "mod_id:dep_id"
-        Displays as: "<mod name> → <dep name> [Remove]"
-        """
+        """Shows all suppressed dependency and error/warning badges."""
         w  = QWidget()
         lo = QVBoxLayout(w)
         lo.setSpacing(6)
 
         lo.addWidget(QLabel(
-            "<b>Suppressed dependency warnings</b><br>"
+            "<b>Suppressed warnings &amp; errors</b><br>"
             "<small style='color:#888;'>"
             "These warnings are hidden in the mod editor. "
-            "Remove an entry to re-enable the warning.</small>"))
+            "Remove an entry to re-enable it.</small>"))
 
-        # Scroll area for the list of ignored pairs
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(
@@ -451,10 +449,8 @@ class InstanceEditDialog(QDialog):
         scroll.setWidget(self._ignored_container)
         lo.addWidget(scroll, 1)
 
-        # Populate
         self._populate_ignored()
 
-        # Bottom: clear-all button
         clear_btn = QPushButton("🗑 Clear All")
         clear_btn.setObjectName("dangerButton")
         clear_btn.clicked.connect(self._clear_all_ignored)
@@ -465,8 +461,7 @@ class InstanceEditDialog(QDialog):
         return w
 
     def _populate_ignored(self):
-        """Rebuild the ignored-deps list from instance data."""
-        # Clear existing widgets
+        """Rebuild the ignored warnings list from ignored_deps and ignored_errors."""
         while self._ignored_layout.count():
             item = self._ignored_layout.takeAt(0)
             if item.widget():
@@ -474,77 +469,106 @@ class InstanceEditDialog(QDialog):
 
         installed = self.rw.get_installed_mods() if self.rw else {}
 
-        if not self.inst.ignored_deps:
-            empty = QLabel(
-                "<i style='color:#555;'>No suppressed warnings.</i>")
-            self._ignored_layout.addWidget(empty)
+        has_deps   = bool(self.inst.ignored_deps)
+        has_errors = bool(self.inst.ignored_errors)
+
+        if not has_deps and not has_errors:
+            self._ignored_layout.addWidget(QLabel(
+                "<i style='color:#555;'>No suppressed warnings.</i>"))
             return
 
-        for entry in list(self.inst.ignored_deps):
-            parts = entry.split(':', 1)
-            if len(parts) != 2:
-                continue
-            mod_id, dep_id = parts
+        if has_deps:
+            self._ignored_layout.addWidget(QLabel(
+                "<b style='color:#ff8800;'>📦 Dependency warnings</b>"))
+            for entry in list(self.inst.ignored_deps):
+                parts = entry.split(':', 1)
+                if len(parts) != 2:
+                    continue
+                mod_id, dep_id = parts
+                mod_name = (installed[mod_id].name
+                            if mod_id in installed else mod_id)
+                dep_name = (installed[dep_id].name
+                            if dep_id in installed else dep_id)
+                row = self._make_ignored_row(
+                    f"<b>{mod_name}</b>"
+                    f"<span style='color:#888;'> needs </span>"
+                    f"<b>{dep_name}</b>"
+                    f"<span style='color:#555; font-size:10px;'>"
+                    f"  [{entry}]</span>",
+                    lambda checked, e=entry: self._remove_ignored_dep(e))
+                self._ignored_layout.addWidget(row)
 
-            mod_name = (installed[mod_id].name
-                        if mod_id in installed else mod_id)
-            dep_name = (installed[dep_id].name
-                        if dep_id in installed else dep_id)
+        if has_errors:
+            self._ignored_layout.addWidget(QLabel(
+                "<b style='color:#ff4444;'>🚫 Suppressed errors &amp; warnings</b>"))
+            for entry in list(self.inst.ignored_errors):
+                parts = entry.split(':', 2)
+                if len(parts) != 3:
+                    continue
+                mod_id, sev, msg_prefix = parts
+                mod_name = (installed[mod_id].name
+                            if mod_id in installed else mod_id)
+                icon = _SEV_ICON.get(sev, '⚠')
+                row = self._make_ignored_row(
+                    f"<b>{mod_name}</b>"
+                    f"<span style='color:#888;'>: </span>"
+                    f"{icon} <span style='color:#aaa;'>{msg_prefix}</span>"
+                    f"<span style='color:#555; font-size:10px;'>"
+                    f"  [{sev}]</span>",
+                    lambda checked, e=entry: self._remove_ignored_error(e))
+                self._ignored_layout.addWidget(row)
 
-            row = QFrame()
-            row.setStyleSheet(
-                "QFrame { background:#2a2a2a; border-radius:4px; "
-                "padding:2px; }")
-            row_lo = QHBoxLayout(row)
-            row_lo.setContentsMargins(8, 4, 8, 4)
+    def _make_ignored_row(self, html: str, remove_slot) -> QFrame:
+        """Build a single row frame with label and remove button."""
+        row = QFrame()
+        row.setStyleSheet(
+            "QFrame { background:#2a2a2a; border-radius:4px; padding:2px; }")
+        row_lo = QHBoxLayout(row)
+        row_lo.setContentsMargins(8, 4, 8, 4)
 
-            lbl = QLabel(
-                f"<b>{mod_name}</b>"
-                f"<span style='color:#888;'> needs </span>"
-                f"<b>{dep_name}</b>"
-                f"<span style='color:#555; font-size:10px;'>"
-                f"  [{entry}]</span>")
-            lbl.setWordWrap(True)
-            row_lo.addWidget(lbl, 1)
+        lbl = QLabel(html)
+        lbl.setWordWrap(True)
+        row_lo.addWidget(lbl, 1)
 
-            rem_btn = QPushButton("✕ Remove")
-            rem_btn.setFixedWidth(80)
-            rem_btn.setFixedHeight(22)
-            rem_btn.setStyleSheet(
-                "font-size:10px; padding:1px 6px; "
-                "background:#3a2a2a; color:#cc6666; "
-                "border:1px solid #663333; border-radius:3px;")
-            # Capture entry by value
-            rem_btn.clicked.connect(
-                lambda checked, e=entry: self._remove_ignored(e))
-            row_lo.addWidget(rem_btn)
+        rem_btn = QPushButton("✕ Remove")
+        rem_btn.setFixedWidth(80)
+        rem_btn.setFixedHeight(22)
+        rem_btn.setStyleSheet(
+            "font-size:10px; padding:1px 6px; "
+            "background:#3a2a2a; color:#cc6666; "
+            "border:1px solid #663333; border-radius:3px;")
+        rem_btn.clicked.connect(remove_slot)
+        row_lo.addWidget(rem_btn)
+        return row
 
-            self._ignored_layout.addWidget(row)
-
-    def _remove_ignored(self, entry: str):
+    def _remove_ignored_dep(self, entry: str):
         if entry in self.inst.ignored_deps:
             self.inst.ignored_deps.remove(entry)
             self.inst.save()
             self._populate_ignored()
 
-    def _clear_all_ignored(self):
-        if not self.inst.ignored_deps:
-            return
-        if QMessageBox.question(
-            self, "Clear All",
-            "Remove all suppressed dependency warnings?",
-        ) == QMessageBox.StandardButton.Yes:
-            self.inst.ignored_deps.clear()
+    def _remove_ignored_error(self, entry: str):
+        if entry in self.inst.ignored_errors:
+            self.inst.ignored_errors.remove(entry)
             self.inst.save()
             self._populate_ignored()
 
-    # ── Save ─────────────────────────────────────────────────────────────
+    def _clear_all_ignored(self):
+        if not self.inst.ignored_deps and not self.inst.ignored_errors:
+            return
+        if QMessageBox.question(
+            self, "Clear All",
+            "Remove all suppressed warnings and errors?",
+        ) == QMessageBox.StandardButton.Yes:
+            self.inst.ignored_deps.clear()
+            self.inst.ignored_errors.clear()
+            self.inst.save()
+            self._populate_ignored()
 
     def _save(self):
         self.inst.notes = self.notes_edit.toPlainText()
         self.inst.group = self.group_edit.text().strip()
 
-        # Rebuild launch_args from Settings tab checkboxes
         args: list[str] = []
         for cb, a in self._settings_arg_cbs:
             if cb.isChecked():
@@ -558,16 +582,14 @@ class InstanceEditDialog(QDialog):
             args.extend(custom.split())
 
         self.inst.rimworld_exe_override = self._exe_override.text().strip()
-        self.inst.launch_args    = args
-        self.inst.mods_configured = self._remember_cb.isChecked()
+        self.inst.launch_args           = args
+        self.inst.mods_configured       = self._remember_cb.isChecked()
         self.inst.save()
         self.instance_changed.emit()
         self.accept()
 
-    # ── Helpers ───────────────────────────────────────────────────────────
-
     def _open_mod_editor(self):
-        from app.ui.modeditor import ModEditorDialog
+        from app.ui.modeditor import ModEditorDialog  # pylint: disable=import-outside-toplevel
         if self.rw and ModEditorDialog(self, self.inst, self.rw).exec():
             self.instance_changed.emit()
             self.accept()
@@ -583,12 +605,10 @@ class InstanceEditDialog(QDialog):
                 self, "Export", f"Exported {len(self.inst.mods)} mods.")
 
     def _open_log_viewer(self):
-        from app.ui.log_viewer import LogViewerDialog
+        from app.ui.log_viewer import LogViewerDialog  # pylint: disable=import-outside-toplevel
         LogViewerDialog(self, LogParser(), self.inst).exec()
 
     def _open_path(self, path: Path):
-        import os
-        import subprocess
         path.mkdir(parents=True, exist_ok=True)
         if os.name == 'nt':
             subprocess.Popen(['explorer', str(path)])
@@ -596,7 +616,6 @@ class InstanceEditDialog(QDialog):
             subprocess.Popen(['xdg-open', str(path)])
 
     def _browse_exe_override(self):
-        import platform
         if platform.system() == 'Windows':
             filt = "Executable (*.exe);;All Files (*)"
         else:
@@ -612,5 +631,5 @@ class InstanceEditDialog(QDialog):
             return ''
         try:
             return datetime.fromisoformat(iso).strftime("%b %d, %Y  %H:%M")
-        except Exception:
+        except ValueError:
             return iso[:16]

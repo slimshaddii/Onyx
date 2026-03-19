@@ -1,9 +1,13 @@
+"""Launch dialog — configure and fire a RimWorld instance launch."""
+
 from pathlib import Path
-from PyQt6.QtWidgets import (
+
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QCheckBox, QLineEdit, QGroupBox, QGridLayout,
 )
 
+from app.core.app_settings import AppSettings
 from app.core.instance import Instance
 from app.core.launcher import Launcher
 from app.core.save_parser import parse_save_header, compare_save_mods, SaveCompat
@@ -11,6 +15,8 @@ from app.ui.detail.save_compat import COMPAT_ICON, COMPAT_COLOR, COMPAT_LABEL
 
 
 class LaunchDialog(QDialog):
+    """Dialog for reviewing instance info, configuring launch args, and launching."""
+
     def __init__(self, parent, instance: Instance, launcher: Launcher):
         super().__init__(parent)
         self.instance      = instance
@@ -23,12 +29,9 @@ class LaunchDialog(QDialog):
         self._build()
         self._check_save_compat()
 
-    # ── UI construction ───────────────────────────────────────────────────
-
     def _build(self):
         lo = QVBoxLayout(self)
 
-        # ── Instance summary ──────────────────────────────────────────────
         info = QGroupBox("Instance")
         gl   = QGridLayout()
         gl.addWidget(QLabel("Name:"),  0, 0)
@@ -44,13 +47,11 @@ class LaunchDialog(QDialog):
         info.setLayout(gl)
         lo.addWidget(info)
 
-        # ── Save compatibility warning ─────────────────────────────────────
         self.compat_warning = QLabel("")
         self.compat_warning.setWordWrap(True)
         self.compat_warning.hide()
         lo.addWidget(self.compat_warning)
 
-        # ── Launch arguments ──────────────────────────────────────────────
         ag = QGroupBox("Launch Arguments")
         al = QVBoxLayout()
 
@@ -66,7 +67,6 @@ class LaunchDialog(QDialog):
             row.addWidget(cb)
             row.addWidget(QLabel(a['desc']))
 
-            vi = None
             if a.get('has_value'):
                 vi = QLineEdit()
                 vi.setFixedWidth(80)
@@ -106,7 +106,6 @@ class LaunchDialog(QDialog):
         ag.setLayout(al)
         lo.addWidget(ag)
 
-        # ── Remember / skip next time ─────────────────────────────────────
         self.save_cb = QCheckBox("Remember arguments and skip this dialog next time")
         self.save_cb.setChecked(self.instance.mods_configured)
         lo.addWidget(self.save_cb)
@@ -121,8 +120,6 @@ class LaunchDialog(QDialog):
         self.launch_btn.clicked.connect(self._launch)
         btns.addWidget(self.launch_btn)
         lo.addLayout(btns)
-
-    # ── Save compat check ─────────────────────────────────────────────────
 
     def _check_save_compat(self):
         saves = self.instance.get_save_files()
@@ -166,8 +163,6 @@ class LaunchDialog(QDialog):
             f"border-radius:4px;")
         self.compat_warning.show()
 
-    # ── Launch ────────────────────────────────────────────────────────────
-
     def _launch(self):
         extra: list[str] = []
         for cb, a in self.arg_cbs:
@@ -181,20 +176,17 @@ class LaunchDialog(QDialog):
         if c:
             extra.extend(c.split())
 
-        # Save args and mark configured when remember is checked
         if self.save_cb.isChecked():
-            self.instance.launch_args    = extra
+            self.instance.launch_args     = extra
             self.instance.mods_configured = True
         else:
-            # Unchecking resets the skip-dialog flag
             self.instance.mods_configured = False
             self.instance.launch_args     = extra
         self.instance.save()
 
-        from app.core.app_settings import AppSettings
-        _s      = AppSettings.instance()
-        dr      = _s.data_root
-        exe     = _s.rimworld_exe
+        _s        = AppSettings.instance()
+        dr        = _s.data_root
+        exe       = _s.rimworld_exe
         onyx_mods = Path(dr)  / 'mods' if dr  else None
         game_mods = Path(exe).parent / 'Mods' if exe else None
 

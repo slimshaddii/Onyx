@@ -3,27 +3,34 @@ Links Onyx-downloaded mods into the game's Mods folder.
 Per-instance sync: on launch, only active mods get linked.
 """
 
+import ctypes
 import os
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional
 
-_DLC_PACKAGE_IDS = {
+_DLC_PACKAGE_IDS = frozenset({
     'ludeon.rimworld',
     'ludeon.rimworld.royalty',
     'ludeon.rimworld.ideology',
     'ludeon.rimworld.biotech',
     'ludeon.rimworld.anomaly',
     'ludeon.rimworld.odyssey',
-}
+})
 
-_DLC_FOLDER_NAMES = {
+_DLC_FOLDER_NAMES = frozenset({
     'core', 'royalty', 'ideology', 'biotech', 'anomaly', 'odyssey',
-}
+})
 
+# Windows API constant — junction/reparse-point attribute flag.
+_FILE_ATTR_REPARSE_POINT = 0x400
+
+
+# ── DLC guard ─────────────────────────────────────────────────────────────────
 
 def _is_dlc(mod_id: str, folder_name: str = '') -> bool:
+    """Return True if mod_id or folder_name identifies a vanilla DLC."""
     if mod_id.lower() in _DLC_PACKAGE_IDS:
         return True
     if folder_name.lower() in _DLC_FOLDER_NAMES:
@@ -31,81 +38,49 @@ def _is_dlc(mod_id: str, folder_name: str = '') -> bool:
     return False
 
 
+# ── Public API ────────────────────────────────────────────────────────────────
+
 def sync_instance_mods(active_mod_ids: list[str],
                        all_mods: dict,
                        game_mods_dir: Path,
                        onyx_mods_dir: Optional[Path] = None) -> dict:
-    results = {'linked': 0, 'unlinked': 0, 'skipped': 0,
-               'failed': 0, 'errors': []}
+    """
+    Synchronise the game's Mods folder to match the active mod list.
+
+    Removes game-side links for mods that are no longer active, and
+    creates new links for mods that are active but not yet linked.
+    DLC folders are always skipped. Returns a result dict with counters
+    and an 'errors' list of non-fatal problem descriptions.
+    """
+    results: dict = {'linked': 0, 'unlinked': 0, 'skipped': 0,
+                     'failed': 0, 'errors': []}
     game_mods_dir.mkdir(parents=True, exist_ok=True)
 
-    needed_folders = {}
-    for mid in active_mod_ids:
-        if _is_dlc(mid):
-            continue
-        info = all_mods.get(mid)
-        if info and info.path and info.path.exists():
-            if _is_dlc(mid, info.path.name):
-                continue
-            try:
-                path_str = str(info.path.resolve()).lower()
-                if ('data' + os.sep in path_str and
-                        ('rimworld' in path_str or 'game' in path_str)):
-                    continue
-            except Exception:
-                pass
-            needed_folders[info.path.name] = mid
+    needed_folders = _build_needed_folders(active_mod_ids, all_mods)
 
     onyx_managed: set[str] = set()
     if onyx_mods_dir and onyx_mods_dir.exists():
         onyx_managed = {d.name for d in onyx_mods_dir.iterdir()
                         if d.is_dir()}
 
-    # Remove links that shouldn't be there
-    for item in game_mods_dir.iterdir():
-        if not item.is_dir():
-            continue
-        if item.name.lower() in _DLC_FOLDER_NAMES:
-            continue
-        if item.name in onyx_managed and item.name not in needed_folders:
-            if _force_remove(item):
-                results['unlinked'] += 1
-            else:
-                results['errors'].append(f"Failed to remove {item.name}")
+    _remove_stale_links(game_mods_dir, onyx_managed, needed_folders, results)
 
-    # Add needed links
     if onyx_mods_dir:
-        for folder_name, mod_id in needed_folders.items():
-            if folder_name.lower() in _DLC_FOLDER_NAMES:
-                continue
-
-            src = onyx_mods_dir / folder_name
-            if not src.exists():
-                results['errors'].append(f"Source missing: {folder_name}")
-                continue
-
-            dst = game_mods_dir / folder_name
-
-            if _path_exists_any(dst):
-                if _is_valid_link(dst, src):
-                    results['skipped'] += 1
-                    continue
-                else:
-                    _force_remove(dst)
-
-            ok, method = _create_link(src, dst)
-            if ok:
-                results['linked'] += 1
-            else:
-                results['failed'] += 1
-                results['errors'].append(f"{folder_name}: {method}")
+        _add_needed_links(onyx_mods_dir, game_mods_dir,
+                          needed_folders, results)
 
     return results
 
 
 def clear_all_managed_mods(game_mods_dir: Path,
                             onyx_mods_dir: Path) -> dict:
-    results = {'removed': 0, 'failed': 0, 'errors': []}
+    """
+    Remove all game-side links for mods managed by Onyx.
+
+    Only removes items whose folder name appears in onyx_mods_dir.
+    DLC folders are always skipped.
+    """
+    results: dict = {'removed': 0, 'failed': 0, 'errors': []}
     if not onyx_mods_dir.exists():
         return results
     onyx_managed = {d.name for d in onyx_mods_dir.iterdir() if d.is_dir()}
@@ -122,7 +97,12 @@ def clear_all_managed_mods(game_mods_dir: Path,
 
 
 def sync_all_mods(onyx_mods_dir: Path, game_mods_dir: Path) -> dict:
-    results = {'linked': 0, 'skipped': 0, 'failed': 0, 'errors': []}
+    """
+    Link every mod in onyx_mods_dir into game_mods_dir.
+
+    Skips DLC folders and any destination that already exists.
+    """
+    results: dict = {'linked': 0, 'skipped': 0, 'failed': 0, 'errors': []}
     if not onyx_mods_dir.exists():
         return results
     game_mods_dir.mkdir(parents=True, exist_ok=True)
@@ -146,6 +126,11 @@ def sync_all_mods(onyx_mods_dir: Path, game_mods_dir: Path) -> dict:
 
 def link_mod_to_game(mod_source: Path,
                      game_mods_dir: Path) -> tuple[bool, str]:
+    """
+    Link a single mod source directory into game_mods_dir.
+
+    Returns (True, reason) on success, (False, reason) on failure.
+    """
     if not mod_source.exists():
         return False, "source_missing"
     if mod_source.name.lower() in _DLC_FOLDER_NAMES:
@@ -158,6 +143,7 @@ def link_mod_to_game(mod_source: Path,
 
 
 def unlink_mod_from_game(mod_name: str, game_mods_dir: Path) -> bool:
+    """Remove the game-side link for a single mod by folder name."""
     target = game_mods_dir / mod_name
     if not _path_exists_any(target):
         return True
@@ -165,18 +151,28 @@ def unlink_mod_from_game(mod_name: str, game_mods_dir: Path) -> bool:
 
 
 def delete_downloaded_mod(mod_folder: Path, game_mods_dir: Path) -> bool:
+    """
+    Unlink and permanently delete a mod folder from the Onyx mods directory.
+
+    Returns True if the folder no longer exists after the operation.
+    """
     unlink_mod_from_game(mod_folder.name, game_mods_dir)
     if mod_folder.exists():
         try:
             shutil.rmtree(str(mod_folder))
             return True
-        except Exception:
+        except OSError:
             return False
     return True
 
 
 def verify_game_mods(onyx_mods_dir: Path, game_mods_dir: Path) -> dict:
-    status = {}
+    """
+    Check the status of each Onyx-managed mod in game_mods_dir.
+
+    Returns a dict mapping folder_name → 'ok' | 'missing' | 'broken'.
+    """
+    status: dict = {}
     if not onyx_mods_dir.exists():
         return status
     for d in onyx_mods_dir.iterdir():
@@ -194,9 +190,196 @@ def verify_game_mods(onyx_mods_dir: Path, game_mods_dir: Path) -> dict:
     return status
 
 
+def delete_mod_permanently(workshop_id: str,
+                            onyx_mods_dir: Path,
+                            game_mods_dir: Path,
+                            steamcmd_path: str = '') -> dict:
+    """
+    Permanently delete a mod from:
+      1. The game Mods folder (junction / symlink / copy)
+      2. The Onyx mods folder (source files)
+      3. The SteamCMD ACF manifest (if steamcmd_path provided)
+
+    Returns a result dict with keys:
+        'removed_link'   bool  — game-side link/dir was removed
+        'removed_source' bool  — onyx source folder was removed
+        'removed_acf'    bool  — ACF entry was cleaned
+        'errors'         list  — any non-fatal error messages
+    """
+    errors: list[str] = []
+    result = {
+        'removed_link':   False,
+        'removed_source': False,
+        'removed_acf':    False,
+        'errors':         errors,
+    }
+
+    source_folder = _find_source_folder(onyx_mods_dir, workshop_id, errors)
+
+    if source_folder is None:
+        errors.append(
+            f"Mod folder for workshop ID '{workshop_id}' not found "
+            f"in {onyx_mods_dir}")
+        game_target = game_mods_dir / workshop_id
+        if _path_exists_any(game_target):
+            if _force_remove(game_target):
+                result['removed_link'] = True
+            else:
+                errors.append(f"Could not remove game link: {game_target}")
+        return result
+
+    folder_name = source_folder.name
+    game_target = game_mods_dir / folder_name
+
+    if _path_exists_any(game_target):
+        if _force_remove(game_target):
+            result['removed_link'] = True
+        else:
+            errors.append(f"Could not remove game link: {game_target}")
+    else:
+        result['removed_link'] = True
+
+    if source_folder.exists():
+        try:
+            shutil.rmtree(str(source_folder))
+            if not source_folder.exists():
+                result['removed_source'] = True
+            else:
+                errors.append(
+                    f"rmtree completed but folder still exists: {source_folder}")
+        except OSError as exc:
+            errors.append(
+                f"Could not delete source folder '{source_folder}': {exc}")
+    else:
+        result['removed_source'] = True
+
+    if steamcmd_path and workshop_id:
+        steamcmd_root = Path(steamcmd_path).parent
+        result['removed_acf'] = _remove_from_acf(
+            steamcmd_root, workshop_id, errors)
+
+    return result
+
+
+# ── sync_instance_mods helpers ────────────────────────────────────────────────
+
+def _build_needed_folders(active_mod_ids: list[str],
+                           all_mods: dict) -> dict[str, str]:
+    """
+    Build a mapping of folder_name → mod_id for non-DLC active mods
+    that exist on disk and are not inside the game's Data directory.
+    """
+    needed: dict[str, str] = {}
+    for mid in active_mod_ids:
+        if _is_dlc(mid):
+            continue
+        info = all_mods.get(mid)
+        if not (info and info.path and info.path.exists()):
+            continue
+        if _is_dlc(mid, info.path.name):
+            continue
+        try:
+            path_str = str(info.path.resolve()).lower()
+            if ('data' + os.sep in path_str and
+                    ('rimworld' in path_str or 'game' in path_str)):
+                continue
+        except OSError:
+            pass
+        needed[info.path.name] = mid
+    return needed
+
+
+def _remove_stale_links(game_mods_dir: Path,
+                         onyx_managed: set[str],
+                         needed_folders: dict[str, str],
+                         results: dict) -> None:
+    """Remove game-side links for Onyx-managed mods that are no longer needed."""
+    for item in game_mods_dir.iterdir():
+        if not item.is_dir():
+            continue
+        if item.name.lower() in _DLC_FOLDER_NAMES:
+            continue
+        if item.name in onyx_managed and item.name not in needed_folders:
+            if _force_remove(item):
+                results['unlinked'] += 1
+            else:
+                results['errors'].append(f"Failed to remove {item.name}")
+
+
+def _add_needed_links(onyx_mods_dir: Path,
+                       game_mods_dir: Path,
+                       needed_folders: dict[str, str],
+                       results: dict) -> None:
+    """Create game-side links for all needed mod folders."""
+    for folder_name in needed_folders:
+        if folder_name.lower() in _DLC_FOLDER_NAMES:
+            continue
+
+        src = onyx_mods_dir / folder_name
+        if not src.exists():
+            results['errors'].append(f"Source missing: {folder_name}")
+            continue
+
+        dst = game_mods_dir / folder_name
+
+        if _path_exists_any(dst):
+            if _is_valid_link(dst, src):
+                results['skipped'] += 1
+                continue
+            _force_remove(dst)
+
+        ok, method = _create_link(src, dst)
+        if ok:
+            results['linked'] += 1
+        else:
+            results['failed'] += 1
+            results['errors'].append(f"{folder_name}: {method}")
+
+
+def _find_source_folder(onyx_mods_dir: Path,
+                         workshop_id: str,
+                         errors: list) -> Optional[Path]:
+    """
+    Locate a mod's source folder in onyx_mods_dir by workshop_id.
+
+    Checks for a direct folder named workshop_id first, then scans
+    PublishedFileId.txt files inside each subfolder.
+    Returns the Path if found, or None.
+    """
+    candidate = onyx_mods_dir / workshop_id
+    if candidate.exists() and candidate.is_dir():
+        return candidate
+
+    try:
+        for d in onyx_mods_dir.iterdir():
+            if not d.is_dir():
+                continue
+            for pid_name in ('PublishedFileId.txt', 'publishedfileid.txt'):
+                pid_file = d / 'About' / pid_name
+                if not pid_file.exists():
+                    pid_file = d / pid_name
+                if pid_file.exists():
+                    try:
+                        if pid_file.read_text().strip() == workshop_id:
+                            return d
+                    except OSError:
+                        pass
+    except PermissionError as exc:
+        errors.append(f"Cannot scan mods dir: {exc}")
+
+    return None
+
+
 # ── Low-level helpers ─────────────────────────────────────────────────────────
 
 def _path_exists_any(path: Path) -> bool:
+    """
+    Return True if path exists by any filesystem check.
+
+    Checks Path.exists(), is_symlink(), os.path.lexists(), and on Windows
+    also uses GetFileAttributesW to detect junctions that Python's stat
+    may not see correctly.
+    """
     if path.exists():
         return True
     if path.is_symlink():
@@ -205,16 +388,22 @@ def _path_exists_any(path: Path) -> bool:
         return True
     if os.name == 'nt':
         try:
-            import ctypes
             attrs = ctypes.windll.kernel32.GetFileAttributesW(str(path))
             if attrs != -1:
                 return True
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass
     return False
 
 
 def _is_valid_link(link_path: Path, expected_target: Path) -> bool:
+    """
+    Return True if link_path is a valid link pointing at expected_target.
+
+    For symlinks, verifies the resolved target matches.
+    For Windows junctions, verifies the junction is accessible as a directory.
+    For copies, verifies the folder contains a valid mod.
+    """
     if not _path_exists_any(link_path):
         return False
     try:
@@ -225,11 +414,17 @@ def _is_valid_link(link_path: Path, expected_target: Path) -> bool:
         if os.name == 'nt' and _is_junction(link_path):
             return link_path.is_dir()
         return _is_valid_mod(link_path)
-    except Exception:
+    except OSError:
         return False
 
 
 def _create_link(source: Path, target: Path) -> tuple[bool, str]:
+    """
+    Create a link from target pointing at source.
+
+    Tries, in order: Windows junction → symlink → full copy.
+    Returns (True, method_name) on success, (False, reason) on failure.
+    """
     if _path_exists_any(target):
         if not _force_remove(target):
             return False, "cannot_remove_existing"
@@ -237,12 +432,12 @@ def _create_link(source: Path, target: Path) -> tuple[bool, str]:
     # Windows: try junction first
     if os.name == 'nt':
         try:
-            r = subprocess.run(
+            subprocess.run(
                 ['cmd', '/c', 'mklink', '/J', str(target), str(source)],
                 capture_output=True, text=True, timeout=10, check=False)
             if _path_exists_any(target) and _is_valid_mod(target):
                 return True, "junction"
-        except Exception:
+        except (OSError, FileNotFoundError):
             pass
 
     # All platforms: symlink
@@ -263,12 +458,18 @@ def _create_link(source: Path, target: Path) -> tuple[bool, str]:
         return False, "copy_invalid"
     except FileExistsError:
         return _path_exists_any(target), "already_exists"
-    except Exception as e:
-        return False, f"copy_failed:{e}"
+    except OSError as exc:
+        return False, f"copy_failed:{exc}"
 
 
 def _force_remove(target: Path) -> bool:
-    try:
+    """
+    Remove target by any available method — symlink unlink, rmdir, or rmtree.
+
+    Returns True if the path no longer exists after the operation.
+    Best-effort: catches all exceptions and returns the final existence check.
+    """
+    try:  # pylint: disable=broad-exception-caught
         is_link = target.is_symlink()
         is_junc = _is_junction(target)
 
@@ -283,10 +484,9 @@ def _force_remove(target: Path) -> bool:
                             ['cmd', '/c', 'rmdir', str(target)],
                             capture_output=True, timeout=10, check=False)
                         return not _path_exists_any(target)
-                    except Exception:
+                    except (OSError, FileNotFoundError):
                         pass
             else:
-                # Linux/Mac: symlinks unlink cleanly
                 target.unlink()
                 return not _path_exists_any(target)
 
@@ -305,12 +505,17 @@ def _force_remove(target: Path) -> bool:
                 shutil.rmtree(str(target), ignore_errors=True)
             return not _path_exists_any(target)
 
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         pass
     return not _path_exists_any(target)
 
 
 def _is_valid_mod(path: Path) -> bool:
+    """
+    Return True if path looks like a valid mod directory.
+
+    Checks for About/About.xml, About/about.xml, or any contents at all.
+    """
     if not path.is_dir():
         return False
     for n in ('About.xml', 'about.xml'):
@@ -323,24 +528,115 @@ def _is_valid_mod(path: Path) -> bool:
 
 
 def _is_junction(path: Path) -> bool:
+    """Return True if path is a Windows junction point."""
     if os.name != 'nt':
         return False
     try:
-        import ctypes
         attrs = ctypes.windll.kernel32.GetFileAttributesW(str(path))
         if attrs == -1:
             return False
-        FILE_ATTRIBUTE_REPARSE_POINT = 0x400
-        return bool(attrs & FILE_ATTRIBUTE_REPARSE_POINT)
-    except Exception:
+        return bool(attrs & _FILE_ATTR_REPARSE_POINT)
+    except Exception:  # pylint: disable=broad-exception-caught
         return False
-    
-def delete_mod_permanently(workshop_id: str,
-                            onyx_mods_dir: Path,
-                            game_mods_dir: Path,
-                            steamcmd_path: str = '') -> dict:
-    """..."""
+
+
+# ── ACF helpers ───────────────────────────────────────────────────────────────
 
 def _remove_from_acf(steamcmd_root: Path, workshop_id: str,
                      errors: list) -> bool:
-    """..."""
+    """
+    Remove a workshop item entry from appworkshop_294100.acf so SteamCMD
+    does not think the mod is still managed.
+
+    Parses the ACF text manually to avoid adding a dependency.
+    Returns True if the file was modified, False otherwise.
+    """
+    acf_candidates = [
+        steamcmd_root / 'steamapps' / 'workshop' / 'appworkshop_294100.acf',
+        steamcmd_root / 'workshop' / 'appworkshop_294100.acf',
+    ]
+
+    acf_path: Optional[Path] = None
+    for c in acf_candidates:
+        if c.exists():
+            acf_path = c
+            break
+
+    if acf_path is None:
+        return False
+
+    try:
+        text = acf_path.read_text(encoding='utf-8', errors='replace')
+    except OSError as exc:
+        errors.append(f"Cannot read ACF file: {exc}")
+        return False
+
+    original = text
+    text = _acf_remove_key_block(text, workshop_id)
+
+    if text == original:
+        return False
+
+    try:
+        acf_path.write_text(text, encoding='utf-8')
+        return True
+    except OSError as exc:
+        errors.append(f"Cannot write ACF file: {exc}")
+        return False
+
+
+def _acf_remove_key_block(src: str, key: str) -> str:
+    """
+    Remove a quoted key and its following brace block from ACF text.
+
+    Handles nested braces correctly. Only removes blocks where the key
+    is followed by whitespace then '{' (not inline string values).
+    Safe to call when the key is absent — returns src unchanged.
+    """
+    search = f'"{key}"'
+    pos    = 0
+
+    while True:
+        idx = src.find(search, pos)
+        if idx == -1:
+            break
+
+        brace_start = src.find('{', idx + len(search))
+        if brace_start == -1:
+            break
+
+        between = src[idx + len(search):brace_start]
+        if between.strip():
+            pos = idx + 1
+            continue
+
+        depth  = 0
+        cursor = brace_start
+        while cursor < len(src):
+            if src[cursor] == '{':
+                depth += 1
+            elif src[cursor] == '}':
+                depth -= 1
+                if depth == 0:
+                    break
+            cursor += 1
+
+        if depth != 0:
+            pos = idx + 1
+            continue
+
+        brace_end    = cursor
+        remove_start = idx
+
+        while remove_start > 0 and src[remove_start - 1] in ' \t':
+            remove_start -= 1
+        if remove_start > 0 and src[remove_start - 1] == '\n':
+            remove_start -= 1
+
+        remove_end = brace_end + 1
+        if remove_end < len(src) and src[remove_end] == '\n':
+            remove_end += 1
+
+        src = src[:remove_start] + src[remove_end:]
+
+    return src

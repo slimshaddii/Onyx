@@ -2,14 +2,17 @@
 Action button row for the instance detail panel.
 """
 
+from PyQt6.QtCore import pyqtSignal  # pylint: disable=no-name-in-module
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
+    QWidget, QHBoxLayout, QPushButton,
+)
+
 from app.core.app_settings import AppSettings
 from app.ui.styles import get_colors
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton
-from PyQt6.QtCore import pyqtSignal
 
 
 def _get_styles() -> tuple[str, str, str]:
-    """Return (primary, danger, default) styles for current theme."""
+    """Return (primary, danger, default) button stylesheets for the current theme."""
     c = get_colors(AppSettings.instance().theme)
     primary = f"""
         QPushButton {{
@@ -45,6 +48,8 @@ def _get_styles() -> tuple[str, str, str]:
 
 
 class DetailActions(QWidget):
+    """Horizontal row of action buttons for the selected instance."""
+
     launch_clicked      = pyqtSignal()
     edit_mods_clicked   = pyqtSignal()
     duplicate_clicked   = pyqtSignal()
@@ -96,8 +101,8 @@ class DetailActions(QWidget):
 
         self.set_enabled(False)
 
-    def set_enabled(self, on: bool):
-        # Refresh styles in case theme changed since init
+    def set_enabled(self, on: bool) -> None:
+        """Enable or disable all buttons, refreshing styles for the current theme."""
         primary, danger, default = _get_styles()
         self.launch_btn.setStyleSheet(primary)
         self.edit_mods_btn.setStyleSheet(default)

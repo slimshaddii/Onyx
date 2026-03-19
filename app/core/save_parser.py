@@ -17,24 +17,36 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
+_META_END  = b'</meta>'
+_META_START = b'<meta>'
+_MAX_BYTES  = 4 * 1024 * 1024   # 4 MB safety cap
+_CHUNK_SIZE = 65536
+_UTF8_BOM   = b'\xef\xbb\xbf'
+_GZIP_MAGIC = b'\x1f\x8b'
+
 
 class SaveCompat(Enum):
-    COMPATIBLE   = 'compatible'    # mod lists match exactly
-    CHANGED      = 'changed'       # some mods added/removed
-    MISSING      = 'missing'       # mods in save not installed at all
-    UNKNOWN      = 'unknown'       # could not parse save
+    """Compatibility status between a save file's mod list and the active mod list."""
+
+    COMPATIBLE = 'compatible'   # mod lists match exactly
+    CHANGED    = 'changed'      # some mods added/removed
+    MISSING    = 'missing'      # mods in save not installed at all
+    UNKNOWN    = 'unknown'      # could not parse save
 
 
 @dataclass
 class SaveHeader:
-    save_name:       str
-    game_version:    str
-    mod_ids:         list[str]     = field(default_factory=list)
-    mod_names:       list[str]     = field(default_factory=list)
-    path:            Path          = Path()
+    """Metadata extracted from the <meta> block of a .rws save file."""
+
+    save_name:    str
+    game_version: str
+    mod_ids:      list[str] = field(default_factory=list)
+    mod_names:    list[str] = field(default_factory=list)
+    path:         Path      = Path()
 
     @property
     def mod_count(self) -> int:
+        """Number of mods recorded in the save."""
         return len(self.mod_ids)
 
 
@@ -42,8 +54,8 @@ def parse_save_header(path: Path) -> Optional[SaveHeader]:
     """
     Read only the <meta> section of a .rws save file.
 
-    Streams the gzip data and stops as soon as </meta> is seen
-    so we never decompress the massive <game> block.
+    Streams the data and stops as soon as </meta> is seen
+    so the massive <game> block is never decompressed.
 
     Returns None if the file cannot be read or parsed.
     """
@@ -52,13 +64,12 @@ def parse_save_header(path: Path) -> Optional[SaveHeader]:
         if raw is None:
             return None
 
-        root = ET.fromstring(raw)
-
-        version  = _text(root, 'gameVersion', '')
-        mod_ids  = [li.text.strip() for li in
-                    _find_list(root, 'modIds')  if li.text]
-        mod_names = [li.text.strip() for li in
-                     _find_list(root, 'modNames') if li.text]
+        root      = ET.fromstring(raw)
+        version   = _text(root, 'gameVersion', '')
+        mod_ids   = [li.text.strip() for li in _find_list(root, 'modIds')
+                     if li.text]
+        mod_names = [li.text.strip() for li in _find_list(root, 'modNames')
+                     if li.text]
 
         return SaveHeader(
             save_name=path.stem,
@@ -67,7 +78,7 @@ def parse_save_header(path: Path) -> Optional[SaveHeader]:
             mod_names=mod_names,
             path=path,
         )
-    except Exception:
+    except ET.ParseError:
         return None
 
 
@@ -75,8 +86,7 @@ def compare_save_mods(header: SaveHeader,
                       active_ids: list[str],
                       all_mod_ids: set[str]) -> SaveCompat:
     """
-    Compare the mod list recorded in *header* against the currently
-    active mod list.
+    Compare the mod list recorded in *header* against the currently active list.
 
     Parameters
     ----------
@@ -87,14 +97,12 @@ def compare_save_mods(header: SaveHeader,
     if not header.mod_ids:
         return SaveCompat.UNKNOWN
 
-    save_set   = set(m.lower() for m in header.mod_ids)
-    active_set = set(m.lower() for m in active_ids)
+    save_set   = {m.lower() for m in header.mod_ids}
+    active_set = {m.lower() for m in active_ids}
 
-    # Any save mod not installed at all → MISSING (worst)
     if save_set - all_mod_ids:
         return SaveCompat.MISSING
 
-    # Sets differ but all present → CHANGED
     if save_set != active_set:
         return SaveCompat.CHANGED
 
@@ -104,7 +112,7 @@ def compare_save_mods(header: SaveHeader,
 def diff_save_mods(header: SaveHeader,
                    active_ids: list[str]) -> dict[str, list[str]]:
     """
-    Return detailed diff between save mods and active mods.
+    Return a detailed diff between save mods and active mods.
 
     Returns
     -------
@@ -113,78 +121,68 @@ def diff_save_mods(header: SaveHeader,
       'removed': mods in the save but NOT active now,
     }
     """
-    save_set   = set(m.lower() for m in header.mod_ids)
-    active_set = set(m.lower() for m in active_ids)
+    save_set   = {m.lower() for m in header.mod_ids}
+    active_set = {m.lower() for m in active_ids}
     return {
         'added':   sorted(active_set - save_set),
         'removed': sorted(save_set   - active_set),
     }
 
 
-# ── Internal helpers ──────────────────────────────────────────────────────────
-
 def _read_meta_bytes(path: Path) -> Optional[bytes]:
     """
-    Read the <meta>...</meta> block from a .rws save file.
-    RimWorld 1.5 and earlier: gzip compressed XML
-    RimWorld 1.6+: plain UTF-8 XML (with optional BOM)
-    """
-    META_END  = b'</meta>'
-    MAX_BYTES = 4 * 1024 * 1024  # 4 MB safety cap
+    Stream a .rws save file and return the raw <meta>...</meta> bytes.
 
+    Supports gzip-compressed (RimWorld 1.5 and earlier) and plain UTF-8
+    (RimWorld 1.6+) formats. Strips a UTF-8 BOM if present.
+    Returns None on any read or format error.
+    """
     try:
         raw_header = path.read_bytes()[:3]
     except OSError:
         return None
 
-    # Detect gzip vs plain XML
-    is_gzip = raw_header[:2] == b'\x1f\x8b'
+    is_gzip = raw_header[:2] == _GZIP_MAGIC
 
     try:
+        buf = bytearray()
         if is_gzip:
-            # Legacy gzip path (1.5 and earlier)
-            CHUNK = 65536
-            buf   = bytearray()
             with gzip.open(str(path), 'rb') as gz:
-                while len(buf) < MAX_BYTES:
-                    chunk = gz.read(CHUNK)
+                while len(buf) < _MAX_BYTES:
+                    chunk = gz.read(_CHUNK_SIZE)
                     if not chunk:
                         break
                     buf.extend(chunk)
-                    if META_END in buf:
+                    if _META_END in buf:
                         break
         else:
-            # Plain XML path (1.6+) — read only enough to get <meta>
-            buf = bytearray()
             with open(str(path), 'rb') as f:
-                while len(buf) < MAX_BYTES:
-                    chunk = f.read(65536)
+                while len(buf) < _MAX_BYTES:
+                    chunk = f.read(_CHUNK_SIZE)
                     if not chunk:
                         break
                     buf.extend(chunk)
-                    if META_END in buf:
+                    if _META_END in buf:
                         break
-
     except (gzip.BadGzipFile, OSError, EOFError):
         return None
 
     if not buf:
         return None
 
-    # Strip UTF-8 BOM if present
     data = bytes(buf)
-    if data.startswith(b'\xef\xbb\xbf'):
+    if data.startswith(_UTF8_BOM):
         data = data[3:]
 
-    end_idx   = data.find(META_END)
+    end_idx = data.find(_META_END)
     if end_idx == -1:
         return None
 
-    start_idx = data.find(b'<meta>')
+    start_idx = data.find(_META_START)
     if start_idx == -1:
         return None
 
-    return data[start_idx : end_idx + len(META_END)]
+    return data[start_idx: end_idx + len(_META_END)]
 
 
 def _text(element: ET.Element, tag: str, default: str = '') -> str:

@@ -4,59 +4,23 @@ All network calls happen either in QThreads or synchronously with try/except.
 Numeric fields are always coerced to int.
 """
 
-import requests
+import json
+from dataclasses import dataclass
 from typing import Optional
-from dataclasses import dataclass, field
-from PyQt6.QtCore import QThread, pyqtSignal
 
+import requests
+from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=no-name-in-module
 
-@dataclass
-class WorkshopItem:
-    workshop_id: str = ''
-    title: str = ''
-    description: str = ''
-    author: str = ''
-    preview_url: str = ''
-    subscriptions: int = 0
-    favorites: int = 0
-    file_size: int = 0
-    time_updated: int = 0
-    time_created: int = 0
-    tags: list = None
-    is_installed: bool = False
+_STEAM_FILE_DETAILS_URL = (
+    'https://api.steampowered.com/'
+    'ISteamRemoteStorage/GetPublishedFileDetails/v1/'
+)
+_STEAM_QUERY_FILES_URL = (
+    'https://api.steampowered.com/'
+    'IPublishedFileService/QueryFiles/v1/'
+)
+_RIMWORLD_APP_ID = 294100
 
-    def __post_init__(self):
-        if self.tags is None:
-            self.tags = []
-        for a in ('file_size', 'subscriptions', 'favorites',
-                   'time_updated', 'time_created'):
-            try:
-                setattr(self, a, int(getattr(self, a) or 0))
-            except (ValueError, TypeError):
-                setattr(self, a, 0)
-
-    @property
-    def size_mb(self) -> float:
-        try:
-            return int(self.file_size) / (1024 * 1024) if self.file_size else 0.0
-        except (ValueError, TypeError):
-            return 0.0
-
-    @property
-    def subs_short(self) -> str:
-        n = self.subscriptions
-        if n >= 1_000_000:
-            return f"{n / 1_000_000:.1f}M"
-        if n >= 1_000:
-            return f"{n / 1_000:.0f}k"
-        return str(n) if n else ""
-
-    @property
-    def workshop_url(self) -> str:
-        return f"https://steamcommunity.com/sharedfiles/filedetails/?id={self.workshop_id}"
-
-
-# Well-known popular RimWorld mods for fallback browsing
 POPULAR_IDS = [
     '2009463077', '1874644848', '818773962', '2573814850',
     '1561769193', '2023507013', '1702143502', '2266773437',
@@ -68,7 +32,62 @@ POPULAR_IDS = [
 ]
 
 
-def _safe_int(val, default=0) -> int:
+@dataclass
+class WorkshopItem:
+    """A single Steam Workshop item with metadata fetched from the API."""
+
+    workshop_id:   str  = ''
+    title:         str  = ''
+    description:   str  = ''
+    author:        str  = ''
+    preview_url:   str  = ''
+    subscriptions: int  = 0
+    favorites:     int  = 0
+    file_size:     int  = 0
+    time_updated:  int  = 0
+    time_created:  int  = 0
+    tags:          list = None
+    is_installed:  bool = False
+
+    def __post_init__(self):
+        """Normalise tags to a list and coerce numeric fields to int."""
+        if self.tags is None:
+            self.tags = []
+        for attr in ('file_size', 'subscriptions', 'favorites',
+                      'time_updated', 'time_created'):
+            try:
+                setattr(self, attr, int(getattr(self, attr) or 0))
+            except (ValueError, TypeError):
+                setattr(self, attr, 0)
+
+    @property
+    def size_mb(self) -> float:
+        """File size in megabytes."""
+        try:
+            return int(self.file_size) / (1024 * 1024) if self.file_size else 0.0
+        except (ValueError, TypeError):
+            return 0.0
+
+    @property
+    def subs_short(self) -> str:
+        """Subscription count as a short human-readable string."""
+        n = self.subscriptions
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.1f}M"
+        if n >= 1_000:
+            return f"{n / 1_000:.0f}k"
+        return str(n) if n else ""
+
+    @property
+    def workshop_url(self) -> str:
+        """Full URL to this item's Steam Workshop page."""
+        return (
+            f"https://steamcommunity.com/sharedfiles/filedetails/"
+            f"?id={self.workshop_id}"
+        )
+
+
+def _safe_int(val, default: int = 0) -> int:
     try:
         return int(val) if val else default
     except (ValueError, TypeError):
@@ -77,22 +96,24 @@ def _safe_int(val, default=0) -> int:
 
 def fetch_details_sync(ids: list[str],
                        installed_ids: Optional[set] = None) -> list[WorkshopItem]:
-    """Synchronous fetch — blocks but guaranteed no thread issues."""
+    """Synchronously fetch Workshop item details for the given IDs (batched in 50s)."""
     if not ids:
         return []
     installed_ids = installed_ids or set()
-    url = 'https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/'
-    all_items = []
+    all_items: list[WorkshopItem] = []
 
     for start in range(0, len(ids), 50):
-        chunk = ids[start:start + 50]
+        chunk     = ids[start:start + 50]
         post_data = {'itemcount': len(chunk)}
         for i, wid in enumerate(chunk):
             post_data[f'publishedfileids[{i}]'] = wid
+
         try:
-            resp = requests.post(url, data=post_data, timeout=15)
+            resp = requests.post(_STEAM_FILE_DETAILS_URL, data=post_data,
+                                 timeout=15)
             resp.raise_for_status()
-            details = resp.json().get('response', {}).get('publishedfiledetails', [])
+            details = resp.json().get('response', {}).get(
+                'publishedfiledetails', [])
             for d in details:
                 if _safe_int(d.get('result')) != 1:
                     continue
@@ -109,29 +130,34 @@ def fetch_details_sync(ids: list[str],
                     tags=[t.get('tag', '') for t in d.get('tags', [])],
                     is_installed=wid in installed_ids,
                 ))
-        except Exception as e:
-            print(f"[Workshop] fetch_details_sync error: {e}")
+        except (requests.RequestException, json.JSONDecodeError, ValueError) as exc:
+            print(f"[Workshop] fetch_details_sync error: {exc}")
             continue
+
     return all_items
 
 
 def search_with_api_sync(query: str, api_key: str, sort_type: int = 12,
                          per_page: int = 30,
                          installed_ids: Optional[set] = None) -> list[WorkshopItem]:
-    """Synchronous API key search."""
+    """Synchronously search Workshop via API key. Returns empty list on failure."""
     installed_ids = installed_ids or set()
-    url = 'https://api.steampowered.com/IPublishedFileService/QueryFiles/v1/'
     params = {
-        'key': api_key, 'query_type': sort_type,
-        'page': 1, 'numperpage': per_page,
-        'appid': 294100, 'search_text': query,
-        'return_tags': True, 'return_previews': True,
-        'return_short_description': True, 'strip_description_bbcode': True,
+        'key':                     api_key,
+        'query_type':              sort_type,
+        'page':                    1,
+        'numperpage':              per_page,
+        'appid':                   _RIMWORLD_APP_ID,
+        'search_text':             query,
+        'return_tags':             True,
+        'return_previews':         True,
+        'return_short_description': True,
+        'strip_description_bbcode': True,
     }
     try:
-        resp = requests.get(url, params=params, timeout=15)
+        resp = requests.get(_STEAM_QUERY_FILES_URL, params=params, timeout=15)
         resp.raise_for_status()
-        items = []
+        items: list[WorkshopItem] = []
         for fd in resp.json().get('response', {}).get('publishedfiledetails', []):
             preview = ''
             for p in fd.get('previews', []):
@@ -152,43 +178,55 @@ def search_with_api_sync(query: str, api_key: str, sort_type: int = 12,
                 is_installed=wid in installed_ids,
             ))
         return items
-    except Exception as e:
-        print(f"[Workshop] API search error: {e}")
+    except (requests.RequestException, json.JSONDecodeError, ValueError) as exc:
+        print(f"[Workshop] API search error: {exc}")
         return []
 
 
 class WorkshopSearchThread(QThread):
+    """
+    QThread that searches the Steam Workshop and emits results.
+
+    Uses API key search if available, otherwise falls back to fetching
+    the popular mods list.
+    """
+
     results_ready = pyqtSignal(list)
-    error_signal = pyqtSignal(str)
+    error_signal  = pyqtSignal(str)
     status_signal = pyqtSignal(str)
 
     SORT_MAP = {
-        'trend': 12, 'recent': 1, 'subscriptions': 4,
-        'favorites': 7, 'last_updated': 21,
+        'trend':        12,
+        'recent':        1,
+        'subscriptions': 4,
+        'favorites':     7,
+        'last_updated': 21,
     }
 
-    def __init__(self, query='', api_key='', per_page=30,
-                 sort='trend', installed_ids=None):
+    def __init__(self, query: str = '', api_key: str = '', per_page: int = 30,
+                 sort: str = 'trend', installed_ids=None):
         super().__init__()
-        self.query = query
-        self.api_key = api_key
-        self.per_page = per_page
-        self.sort = sort
+        self.query         = query
+        self.api_key       = api_key
+        self.per_page      = per_page
+        self.sort          = sort
         self.installed_ids = installed_ids or set()
-        self._cancelled = False
+        self._cancelled    = False
 
-    def cancel(self):
+    def cancel(self) -> None:
+        """Request cancellation before results are emitted."""
         self._cancelled = True
 
-    def run(self):
+    def run(self) -> None:  # pylint: disable=broad-exception-caught
+        """Execute the Workshop search on the background thread."""
         if self._cancelled:
             return
         try:
             if self.api_key:
                 self.status_signal.emit("Searching…")
-                sort_type = self.SORT_MAP.get(self.sort, 12)
                 items = search_with_api_sync(
-                    self.query, self.api_key, sort_type,
+                    self.query, self.api_key,
+                    self.SORT_MAP.get(self.sort, 12),
                     self.per_page, self.installed_ids)
             else:
                 if self.query:
@@ -200,23 +238,26 @@ class WorkshopSearchThread(QThread):
 
             if not self._cancelled:
                 self.results_ready.emit(items)
-        except Exception as e:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             if not self._cancelled:
-                self.error_signal.emit(str(e))
+                self.error_signal.emit(str(exc))
 
 
 class WorkshopDetailThread(QThread):
+    """QThread that fetches full details for a specific list of Workshop IDs."""
+
     detail_ready = pyqtSignal(list)
     error_signal = pyqtSignal(str)
 
     def __init__(self, ids: list[str], installed_ids=None):
         super().__init__()
-        self.ids = ids
+        self.ids           = ids
         self.installed_ids = installed_ids or set()
 
-    def run(self):
+    def run(self) -> None:  # pylint: disable=broad-exception-caught
+        """Fetch details and emit the result list."""
         try:
-            items = fetch_details_sync(self.ids, self.installed_ids)
-            self.detail_ready.emit(items)
-        except Exception as e:
-            self.error_signal.emit(str(e))
+            self.detail_ready.emit(
+                fetch_details_sync(self.ids, self.installed_ids))
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.error_signal.emit(str(exc))

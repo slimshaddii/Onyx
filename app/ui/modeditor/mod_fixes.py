@@ -1,18 +1,21 @@
 """Fix Issues / download flow for ModEditorDialog."""
 
 from pathlib import Path
-from PyQt6.QtWidgets import QMessageBox
 
+from PyQt6.QtWidgets import QMessageBox  # pylint: disable=no-name-in-module
+
+from app.core.app_settings import AppSettings
 from app.core.dep_resolver import (
     analyze_modlist, get_downloadable_deps, get_activatable_deps,
 )
+from app.core.paths import mods_dir
 from app.core.steamcmd import DownloadQueue
 from app.ui.modeditor.issue_checker import check_load_order
 
 
 class ModFixes:
-    """
-    Mixin for ModEditorDialog.
+    """Mixin for ModEditorDialog.
+
     Requires: self.active, self.avail, self.inst, self.rw,
               self.all_mods, self.names,
               self._ignored_deps_set(), self._avail_ids(),
@@ -21,6 +24,8 @@ class ModFixes:
               self._filter_on, self._apply_filter(),
               self.active.filter_by_ids()
     """
+
+    # pylint: disable=no-member,attribute-defined-outside-init
 
     def _fix(self):
         ids    = self.active.get_ids()
@@ -42,7 +47,8 @@ class ModFixes:
         for dep in activatable:
             if dep in self.all_mods and dep not in current_active:
                 for i in range(self.avail.count()):
-                    if self.avail.item(i) and self.avail.item(i).mid == dep:
+                    it = self.avail.item(i)
+                    if it and it.mid == dep:
                         self.avail.takeItem(i)
                         break
                 self._mk_active(dep)
@@ -70,10 +76,7 @@ class ModFixes:
         ) == QMessageBox.StandardButton.Yes:
             self._start_download(downloadable)
 
-
     def _start_download(self, mods_to_download: list):
-        from app.core.app_settings import AppSettings
-        from app.core.paths import mods_dir
         _s            = AppSettings.instance()
         steamcmd_path = _s.steamcmd_path
         data_root     = _s.data_root
@@ -88,23 +91,20 @@ class ModFixes:
                                 "Data root not configured.")
             return
 
-        from app.core.steamcmd import DownloadQueue
+        from app.ui.modeditor.download_manager import DownloadManagerWindow  # pylint: disable=import-outside-toplevel
         queue = DownloadQueue(
             steamcmd_path=steamcmd_path,
             destination=str(Path(data_root) / 'mods'),
             max_concurrent=2,
             username=username)
 
-        from app.ui.modeditor.download_manager import DownloadManagerWindow
         mgr = DownloadManagerWindow(queue, self)
         mgr.queue_and_show(mods_to_download)
 
-        # Connect completion to refresh mods after downloads finish
         queue.queue_empty.connect(
-            lambda: self._on_fix_downloads_complete(queue, mgr))
+            lambda: self._on_fix_downloads_complete(_queue=queue, _mgr=mgr))
 
-    def _on_fix_downloads_complete(self, queue, mgr):
-        """Called when all fix-issue downloads finish."""
+    def _on_fix_downloads_complete(self, _queue, _mgr):
         self.all_mods = self.rw.get_installed_mods(
             extra_mod_paths=self._extra_mod_paths(),
             force_rescan=True,
@@ -132,24 +132,10 @@ class ModFixes:
         if issues:
             self._show_fix_report(issues, newly, [])
 
-        newly = 0
-        for dep in get_activatable_deps(issues):
-            if (dep in self.all_mods and
-                    dep not in set(self.active.get_ids())):
-                self._mk_active(dep)
-                newly += 1
-
-        if newly:
-            self.active.apply_item_widgets()
-            self._refresh_inner()
-
-        if issues:
-            self._show_fix_report(issues, newly, [])
-
     def _show_fix_report(self, issues: list, activated: int,
                          dl_results: list):
-        order    = self.active.get_ids()
-        _pos     = {m: i for i, m in enumerate(order)}
+        order = self.active.get_ids()
+        _pos  = {m: i for i, m in enumerate(order)}
 
         order_count = sum(
             len(check_load_order(mid, self.all_mods.get(mid),
@@ -222,9 +208,6 @@ class ModFixes:
             self._apply_filter()
 
     def _extra_mod_paths(self) -> list[str]:
-        from app.core.app_settings import AppSettings
-        from app.core.paths import mods_dir
-        from pathlib import Path
         _s    = AppSettings.instance()
         paths = []
         if _s.data_root:
@@ -232,22 +215,14 @@ class ModFixes:
         if _s.steam_workshop_path:
             paths.append(_s.steam_workshop_path)
         return paths
-    
-    def _known_workshop_ids(self) -> dict[str, str]:
-        """
-        Build workshop ID map from:
-        1. Instance mod_workshop_ids (populated from .onyx import)
-        2. Installed mod metadata (workshop_id field from PublishedFileId.txt)
-        """
-        result: dict[str, str] = {}
 
-        # From installed mods metadata
+    def _known_workshop_ids(self) -> dict[str, str]:
+        """Build workshop ID map from installed mod metadata and instance store."""
+        result: dict[str, str] = {}
         for mid, info in self.all_mods.items():
             if info.workshop_id:
                 result[mid] = info.workshop_id
-
-        # From instance stored IDs (overrides — more reliable for
-        # mods not currently installed)
         result.update(self.inst.mod_workshop_ids)
-
         return result
+
+    # pylint: enable=no-member,attribute-defined-outside-init

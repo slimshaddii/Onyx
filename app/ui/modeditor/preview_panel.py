@@ -1,9 +1,10 @@
 """Mod preview panel."""
 
 from pathlib import Path
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QScrollArea
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap
+
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QScrollArea  # pylint: disable=no-name-in-module
+from PyQt6.QtCore import Qt  # pylint: disable=no-name-in-module
+from PyQt6.QtGui import QPixmap  # pylint: disable=no-name-in-module
 
 from app.core.rimworld import ModInfo
 from app.core.app_settings import AppSettings
@@ -11,6 +12,8 @@ from app.ui.styles import get_colors
 
 
 class PreviewPanel(QWidget):
+    """Display a selected mod's image preview, metadata, issues, and description."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current_image_path: str = ''
@@ -61,6 +64,7 @@ class PreviewPanel(QWidget):
 
     def show_mod(self, info: ModInfo | None, mid: str,
                  badges: list[tuple[str, str, str, str]]):
+        """Populate the panel with the selected mod's details."""
         c = get_colors(AppSettings.instance().theme)
 
         if not info:
@@ -112,7 +116,8 @@ class PreviewPanel(QWidget):
         self.img.clear()
         self.img.setText("No preview")
 
-    def resizeEvent(self, event):
+    def resizeEvent(self, event):  # pylint: disable=invalid-name
+        """Reload the preview image on resize so scaling stays correct."""
         super().resizeEvent(event)
         if self._current_image_path:
             self._load_preview_image()

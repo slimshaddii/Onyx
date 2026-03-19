@@ -2,15 +2,15 @@
 
 import threading
 from pathlib import Path
-from PyQt6.QtWidgets import QMessageBox
 
-from app.core.modlist import (
-    write_mods_config, read_mods_config, VANILLA_AND_DLCS,
-)
-from app.core.mod_linker import sync_instance_mods
-from app.core.dep_resolver import analyze_modlist
+from PyQt6.QtWidgets import QMessageBox  # pylint: disable=no-name-in-module
+
+from app.core.app_settings import AppSettings
 from app.core.mod_history import ModHistory
-from app.utils.file_utils import load_json, backup_folder
+from app.core.mod_linker import sync_instance_mods
+from app.core.modlist import write_mods_config, VANILLA_AND_DLCS
+from app.ui.modeditor.issue_checker import get_badges
+from app.utils.file_utils import backup_folder
 
 
 class ModIO:
@@ -18,29 +18,28 @@ class ModIO:
     Mixin for ModEditorDialog.
     Requires: self.active, self.inst, self.rw, self.all_mods,
               self._avail_ids(), self._ignored_deps_set(),
+              self._ignored_errors_set(),
               self._mods_changed_from_original()
     """
+
+    # pylint: disable=no-member
 
     def _mods_changed_from_original(self) -> bool:
         return set(self.active.get_ids()) != self._original_mods
 
     def _backup_saves_if_needed(self):
-        """
-        Backs up saves on a daemon thread so it never blocks the UI.
-        Only runs if saves exist and the mod list changed.
-        """
         if not self.inst.has_saves:
             return
         if not self._mods_changed_from_original():
             return
-
         backup_root = self.inst.path / '_save_backups'
         saves_dir   = self.inst.saves_dir
 
         def _do_backup():
             try:
                 backup_folder(saves_dir, backup_root, max_backups=3)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
+                # Background backup must never crash the UI thread.
                 pass
 
         threading.Thread(target=_do_backup, daemon=True).start()
@@ -50,28 +49,21 @@ class ModIO:
         if not any(m.lower() == 'ludeon.rimworld' for m in active_ids):
             active_ids.insert(0, 'ludeon.rimworld')
 
-        from app.ui.modeditor.issue_checker import get_badges as _get_badges
-        from PyQt6.QtWidgets import QMessageBox
+        active_set     = set(active_ids)
+        _pos           = {m: i for i, m in enumerate(active_ids)}
+        ignored_deps   = self._ignored_deps_set()
+        ignored_errors = self._ignored_errors_set()
 
-        issues = analyze_modlist(
-            active_ids, self.rw,
-            self.inst.rimworld_version or '',
-            ignored_deps=self._ignored_deps_set(),
-            extra_mod_paths=self._extra_mod_paths(),
-            known_workshop_ids=self._known_workshop_ids())
-
-        critical = [i for i in issues if i.severity == 'error']
-
-        active_set = set(active_ids)
-        _pos       = {m: i for i, m in enumerate(active_ids)}
-        ignored    = self._ignored_deps_set()
         incompat_errors: list[str] = []
         for mid in active_ids:
-            for badge in _get_badges(mid, self.all_mods, active_set,
-                                     self.inst.rimworld_version or '',
-                                     active_ids, _pos, ignored):
+            for badge in get_badges(
+                    mid, self.all_mods, active_set,
+                    self.inst.rimworld_version or '',
+                    active_ids, _pos,
+                    ignored_deps, ignored_errors):
                 if badge[2] == 'error' and 'ncompatible' in badge[3]:
-                    name = self.all_mods[mid].name if mid in self.all_mods else mid
+                    name = (self.all_mods[mid].name
+                            if mid in self.all_mods else mid)
                     incompat_errors.append(f"  - {name}: {badge[3]}")
 
         if incompat_errors:
@@ -83,7 +75,6 @@ class ModIO:
             QMessageBox.critical(self, "Cannot Save", msg)
             return
 
-        # Backup runs off-thread — never blocks the UI
         self._backup_saves_if_needed()
 
         inactive_ids = [mid for mid in self._avail_ids()
@@ -102,26 +93,16 @@ class ModIO:
         self.inst.mods_configured = True
         self.inst.save()
 
-        # History recording — fast, keep on main thread
         try:
             ModHistory(self.inst.path).record(active_ids, 'Auto-save')
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
+            # Non-critical history tracking must not block saving.
             pass
 
-        # Close the dialog immediately — don't make user wait for sync
         self.accept()
-
-        # Sync runs off-thread AFTER dialog closes
-        # Any sync errors are silent (non-critical — game will still work
-        # with the correct ModsConfig.xml, sync just pre-links mod folders)
         self._sync_mods_async(active_ids)
 
     def _sync_mods_async(self, active_ids: list[str]):
-        """
-        Run sync_instance_mods on a daemon thread after the dialog closes.
-        Errors are non-fatal — the game reads ModsConfig.xml directly.
-        """
-        from app.core.app_settings import AppSettings
         _s  = AppSettings.instance()
         dr  = _s.data_root
         exe = _s.rimworld_exe
@@ -129,15 +110,18 @@ class ModIO:
         if not dr or not exe:
             return
 
-        all_mods    = dict(self.all_mods)   # snapshot before dialog is GC'd
-        game_mods   = Path(exe).parent / 'Mods'
-        onyx_mods   = Path(dr) / 'mods'
+        all_mods  = dict(self.all_mods)
+        game_mods = Path(exe).parent / 'Mods'
+        onyx_mods = Path(dr) / 'mods'
 
         def _do_sync():
             try:
                 sync_instance_mods(active_ids, all_mods,
                                    game_mods, onyx_mods)
-            except Exception:
-                pass   # sync failure is non-fatal
+            except Exception:  # pylint: disable=broad-exception-caught
+                # Background sync must never crash the UI thread.
+                pass
 
         threading.Thread(target=_do_sync, daemon=True).start()
+
+    # pylint: enable=no-member

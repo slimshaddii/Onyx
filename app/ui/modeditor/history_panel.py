@@ -4,12 +4,12 @@ Modlist history dialog — browse, diff, and roll back mod list snapshots.
 Opened from the mod editor's bottom bar via the History button.
 """
 
-from PyQt6.QtWidgets import (
+from PyQt6.QtCore import Qt  # pylint: disable=no-name-in-module
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QSplitter, QWidget,
     QTextEdit, QInputDialog, QMessageBox,
 )
-from PyQt6.QtCore import Qt
 
 from app.core.mod_history import ModHistory, Snapshot
 
@@ -22,34 +22,51 @@ class HistoryDialog(QDialog):
     """
 
     def __init__(self, parent, history: ModHistory,
-                 current_mods: list[str],
-                 mod_names: dict[str, str]):
+             current_mods: list[str],
+             mod_names: dict[str, str]):
         super().__init__(parent)
         self.history       = history
         self.current_mods  = current_mods
         self.mod_names     = mod_names
         self.rolled_back_mods: list[str] | None = None
 
+        # Widget attributes — assigned in _build_left_panel / _build_right_panel
+        self.snap_list:    QListWidget  | None = None
+        self.save_snap_btn: QPushButton | None = None
+        self.del_btn:      QPushButton  | None = None
+        self.detail_label: QLabel       | None = None
+        self.detail_view:  QTextEdit    | None = None
+        self.rollback_btn: QPushButton  | None = None
+
         self.setWindowTitle("Modlist History")
         self.setMinimumSize(720, 480)
         self._build()
         self._load_snapshots()
 
-    # ── UI ────────────────────────────────────────────────────────────────────
-
-    def _build(self):
+    def _build(self) -> None:
         lo = QVBoxLayout(self)
         lo.setSpacing(6)
 
         hint = QLabel(
             "Select one snapshot to view its mod list.  "
             "Select two to compare them.")
-        hint.setStyleSheet("color:#888;font-size:11px;")
+        hint.setStyleSheet("color:#888; font-size:11px;")
         lo.addWidget(hint)
 
         sp = QSplitter(Qt.Orientation.Horizontal)
+        sp.addWidget(self._build_left_panel())
+        sp.addWidget(self._build_right_panel())
+        sp.setSizes([260, 440])
+        lo.addWidget(sp, 1)
 
-        # ── Left: snapshot list ───────────────────────────────────────────
+        btns      = QHBoxLayout()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.reject)
+        btns.addStretch()
+        btns.addWidget(close_btn)
+        lo.addLayout(btns)
+
+    def _build_left_panel(self) -> QWidget:
         left = QWidget()
         ll   = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
@@ -75,9 +92,9 @@ class HistoryDialog(QDialog):
         btn_row.addWidget(self.del_btn)
         ll.addLayout(btn_row)
 
-        sp.addWidget(left)
+        return left
 
-        # ── Right: detail view ────────────────────────────────────────────
+    def _build_right_panel(self) -> QWidget:
         right = QWidget()
         rl    = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
@@ -98,24 +115,14 @@ class HistoryDialog(QDialog):
         self.rollback_btn.clicked.connect(self._rollback)
         rl.addWidget(self.rollback_btn)
 
-        sp.addWidget(right)
-        sp.setSizes([260, 440])
-        lo.addWidget(sp, 1)
+        return right
 
-        btns = QHBoxLayout()
-        btns.addStretch()
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(self.reject)
-        btns.addWidget(close_btn)
-        lo.addLayout(btns)
-
-    # ── Snapshot list ─────────────────────────────────────────────────────────
-
-    def _load_snapshots(self):
+    def _load_snapshots(self) -> None:
         self.snap_list.clear()
         for i, snap in enumerate(self.history.snapshots):
-            text = f"{snap.fmt_date()}  —  {snap.label}  ({snap.mod_count} mods)"
-            it   = QListWidgetItem(text)
+            text = (f"{snap.fmt_date()}  —  {snap.label}"
+                    f"  ({snap.mod_count} mods)")
+            it = QListWidgetItem(text)
             it.setData(Qt.ItemDataRole.UserRole, i)
             self.snap_list.addItem(it)
 
@@ -125,9 +132,7 @@ class HistoryDialog(QDialog):
                 "Snapshots are recorded automatically each time you save "
                 "from the mod editor.")
 
-    # ── Selection handler ─────────────────────────────────────────────────────
-
-    def _on_selection(self):
+    def _on_selection(self) -> None:
         selected = self.snap_list.selectedItems()
         self.del_btn.setEnabled(bool(selected))
 
@@ -138,8 +143,8 @@ class HistoryDialog(QDialog):
             self.rollback_btn.setEnabled(True)
 
         elif len(selected) == 2:
-            idx_a = selected[0].data(Qt.ItemDataRole.UserRole)
-            idx_b = selected[1].data(Qt.ItemDataRole.UserRole)
+            idx_a  = selected[0].data(Qt.ItemDataRole.UserRole)
+            idx_b  = selected[1].data(Qt.ItemDataRole.UserRole)
             snap_a = self.history.snapshots[idx_a]
             snap_b = self.history.snapshots[idx_b]
             self._show_diff(snap_a, snap_b)
@@ -150,29 +155,24 @@ class HistoryDialog(QDialog):
             self.detail_view.setPlainText("")
             self.rollback_btn.setEnabled(False)
 
-    # ── Detail views ──────────────────────────────────────────────────────────
-
-    def _show_snapshot(self, snap: Snapshot):
+    def _show_snapshot(self, snap: Snapshot) -> None:
         self.detail_label.setText(
             f"{snap.fmt_date()}  —  {snap.label}  ({snap.mod_count} mods)")
-
-        lines = []
-        for i, mid in enumerate(snap.mods, 1):
-            name = self.mod_names.get(mid, mid)
-            lines.append(f"{i:3}.  {name}  [{mid}]")
-
+        lines = [
+            f"{i:3}.  {self.mod_names.get(mid, mid)}  [{mid}]"
+            for i, mid in enumerate(snap.mods, 1)
+        ]
         self.detail_view.setPlainText('\n'.join(lines))
 
-    def _show_diff(self, snap_a: Snapshot, snap_b: Snapshot):
-        # snap_a is the newer (lower index), snap_b is the older
-        newer  = snap_a if snap_a.timestamp > snap_b.timestamp else snap_b
-        older  = snap_b if snap_a.timestamp > snap_b.timestamp else snap_a
-        diff   = self.history.diff(newer, older)
+    def _show_diff(self, snap_a: Snapshot, snap_b: Snapshot) -> None:
+        newer = snap_a if snap_a.timestamp > snap_b.timestamp else snap_b
+        older = snap_b if snap_a.timestamp > snap_b.timestamp else snap_a
+        diff  = self.history.diff(newer, older)
 
         self.detail_label.setText(
             f"Diff:  {older.fmt_date()}  →  {newer.fmt_date()}")
 
-        lines = []
+        lines: list[str] = []
 
         if diff['added']:
             lines.append(f"── Added ({len(diff['added'])}) ──────────────")
@@ -191,9 +191,7 @@ class HistoryDialog(QDialog):
 
         self.detail_view.setPlainText('\n'.join(lines))
 
-    # ── Actions ───────────────────────────────────────────────────────────────
-
-    def _save_snapshot(self):
+    def _save_snapshot(self) -> None:
         label, ok = QInputDialog.getText(
             self, "Save Snapshot", "Snapshot label:",
             text="Manual snapshot")
@@ -202,7 +200,7 @@ class HistoryDialog(QDialog):
         self.history.record(self.current_mods, label.strip())
         self._load_snapshots()
 
-    def _delete_snapshot(self):
+    def _delete_snapshot(self) -> None:
         selected = self.snap_list.selectedItems()
         if not selected:
             return
@@ -210,8 +208,7 @@ class HistoryDialog(QDialog):
         if QMessageBox.question(
                 self, "Delete",
                 f"Delete {len(selected)} snapshot(s)?",
-                QMessageBox.StandardButton.Yes |
-                QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         ) != QMessageBox.StandardButton.Yes:
             return
 
@@ -227,7 +224,7 @@ class HistoryDialog(QDialog):
         self.rollback_btn.setEnabled(False)
         self.del_btn.setEnabled(False)
 
-    def _rollback(self):
+    def _rollback(self) -> None:
         selected = self.snap_list.selectedItems()
         if len(selected) != 1:
             return
