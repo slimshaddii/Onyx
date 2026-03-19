@@ -204,8 +204,8 @@ jobs:
             - Non-Steam RimWorld is fully supported via SteamCMD
             - Steam Deck is supported — auto-detection includes Flatpak and native Steam paths
           files: |
-            artifacts/windows-build/OnyxLauncher-Beta-windows.zip
-            artifacts/linux-build/OnyxLauncher-Beta-linux.zip
-            artifacts/macos-build/OnyxLauncher-Beta-macos.zip
+            artifacts/windows-build/*.zip
+            artifacts/linux-build/*.zip
+            artifacts/macos-build/*.zip
           draft: false
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
