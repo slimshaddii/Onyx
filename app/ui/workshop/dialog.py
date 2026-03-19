@@ -16,7 +16,6 @@ from app.core.steam_integration import DownloadMethod, subscribe_via_steam, open
 from app.core.mod_linker import link_mod_to_game, delete_downloaded_mod
 from app.core.rimworld import ModInfo
 
-from app.ui.workshop.sidebar import DownloadSidebar
 from app.ui.workshop.js_inject import INJECT_JS
 from app.ui.workshop.web_page import HAS_WE, WE_ERROR
 
@@ -48,9 +47,12 @@ class WorkshopBrowserDialog(QDialog):
             destination=steamcmd.mods_destination,
             max_concurrent=3,
             username=self._settings.get('steamcmd_username', ''))
+        from app.ui.modeditor.download_manager import DownloadManagerWindow
+        self._dl_manager_window = DownloadManagerWindow(self._dlq, self)
         self._dlq.job_started.connect(self._on_started)
         self._dlq.job_progress.connect(self._on_progress)
         self._dlq.job_finished.connect(self._on_finished)
+
 
         self.setWindowTitle("Steam Workshop — Onyx")
         self.setMinimumSize(1000, 560)
@@ -79,10 +81,6 @@ class WorkshopBrowserDialog(QDialog):
         lo.addWidget(self._make_nav())
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
-        self.sidebar = DownloadSidebar(self)
-        self.sidebar.delete_mod.connect(self._handle_delete)
-        self._refresh_sidebar()
-        body.addWidget(self.sidebar)
         msg = QLabel(
             f"WebEngine unavailable — "
             f"{WE_ERROR or 'pip install PyQt6-WebEngine'}\n"
@@ -105,11 +103,6 @@ class WorkshopBrowserDialog(QDialog):
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
-
-        self.sidebar = DownloadSidebar(self)
-        self.sidebar.delete_mod.connect(self._handle_delete)
-        self._refresh_sidebar()
-        body.addWidget(self.sidebar)
 
         profile = QWebEngineProfile.defaultProfile()
         s = profile.settings()
@@ -135,8 +128,13 @@ class WorkshopBrowserDialog(QDialog):
     # ── Nav bar ──────────────────────────────────────────────────
 
     def _make_nav(self) -> QWidget:
+        from app.core.app_settings import AppSettings
+        from app.ui.styles import get_colors
+        c = get_colors(AppSettings.instance().theme)
         w = QWidget()
-        w.setStyleSheet("background:#12121f;border-bottom:1px solid #252540;")
+        w.setStyleSheet(
+            f"background:{c['bg_panel']};"
+            f"border-bottom:1px solid {c['border']};")
         lo = QHBoxLayout(w)
         lo.setContentsMargins(6, 4, 6, 4)
         lo.setSpacing(3)
@@ -174,14 +172,30 @@ class WorkshopBrowserDialog(QDialog):
         lo.addWidget(go)
 
         
-        dl_coll = QPushButton("Download Collection")
-        dl_coll.setFixedHeight(26)
-        dl_coll.setStyleSheet("font-size:10px;padding:2px 8px;")
-        dl_coll.setToolTip(
+        dl_mgr_btn = QPushButton("Downloads")
+        dl_mgr_btn.setFixedHeight(26)
+        dl_mgr_btn.setStyleSheet("font-size:10px;padding:2px 8px;")
+        dl_mgr_btn.setToolTip("Open Download Manager")
+        dl_mgr_btn.clicked.connect(self._open_download_manager)
+        lo.addWidget(dl_mgr_btn)
+
+        lib_btn = QPushButton("Library")
+        lib_btn.setFixedHeight(26)
+        lib_btn.setStyleSheet("font-size:10px;padding:2px 8px;")
+        lib_btn.setToolTip("Browse downloaded mods")
+        lib_btn.clicked.connect(self._open_library)
+        lo.addWidget(lib_btn)
+
+        lo.addWidget(QLabel("│"))
+
+        dl_coll_btn = QPushButton("Get Collection")
+        dl_coll_btn.setFixedHeight(26)
+        dl_coll_btn.setStyleSheet("font-size:10px;padding:2px 8px;")
+        dl_coll_btn.setToolTip(
             "Download all mods from a Steam Workshop collection.\n"
             "Paste the collection URL or ID in the address bar first.")
-        dl_coll.clicked.connect(self._download_collection)
-        lo.addWidget(dl_coll)
+        dl_coll_btn.clicked.connect(self._download_collection)
+        lo.addWidget(dl_coll_btn)
 
         lo.addWidget(QLabel("│"))
 
@@ -196,17 +210,28 @@ class WorkshopBrowserDialog(QDialog):
         return w
 
     def _make_status(self) -> QWidget:
+        from app.core.app_settings import AppSettings
+        from app.ui.styles import get_colors
+        c = get_colors(AppSettings.instance().theme)
         w = QWidget()
-        w.setStyleSheet("background:#0e0e1a;border-top:1px solid #1a1a30;")
+        w.setStyleSheet(
+            f"background:{c['bg_panel']};"
+            f"border-top:1px solid {c['border']};")
         w.setFixedHeight(24)
         lo = QHBoxLayout(w)
         lo.setContentsMargins(10, 0, 10, 0)
         self.status_lbl = QLabel("Ready")
-        self.status_lbl.setStyleSheet("color:#555;font-size:10px;")
+        self.status_lbl.setStyleSheet(
+            f"color:{c['text_dim']};font-size:10px;")
         lo.addWidget(self.status_lbl, 1)
         self.inst_lbl = QLabel(f"{len(self.installed_ids)} installed")
-        self.inst_lbl.setStyleSheet("color:#4CAF50;font-size:10px;")
+        self.inst_lbl.setStyleSheet(
+            f"color:{c['success']};font-size:10px;")
         lo.addWidget(self.inst_lbl)
+        update_btn = QPushButton("Check Updates")
+        update_btn.clicked.connect(self._open_update_checker)
+        lo.addWidget(update_btn)
+
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
         lo.addWidget(close_btn)
@@ -281,14 +306,47 @@ class WorkshopBrowserDialog(QDialog):
 
         self._dlq.enqueue(mod_id, f"Item {mod_id}")
 
-    def _download_collection(self):
-        """
-        Fetch all mod IDs from a Steam Workshop collection and
-        queue them for download.
-        """
-        t = self.addr.text().strip()
+    def _open_download_manager(self):
+        """Open the persistent download manager window."""
+        from app.ui.modeditor.download_manager import DownloadManagerWindow
+        if not hasattr(self, '_dl_manager_window'):
+            self._dl_manager_window = DownloadManagerWindow(
+                self._dlq, self)
+        self._dl_manager_window.show()
+        self._dl_manager_window.raise_()
+        self._dl_manager_window.activateWindow()
 
-        # Extract ID from URL or use raw ID
+    def _open_library(self):
+        """Open the mod library browser."""
+        from app.ui.mod_library_dialog import ModLibraryDialog
+        from pathlib import Path
+        dr = self._settings.get('data_root', '')
+        if not dr:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Library",
+                                "Data root not configured.")
+            return
+        dlg = ModLibraryDialog(
+            self,
+            Path(dr) / 'mods',
+            download_manager=None)
+        dlg.exec()
+
+    def _open_update_checker(self):
+        from app.ui.mod_update_dialog import ModUpdateDialog
+        from pathlib import Path
+        dr = self._settings.get('data_root', '')
+        if not dr:
+            QMessageBox.warning(self, "Check Updates",
+                                "Data root not configured.")
+            return
+        dlg = ModUpdateDialog(
+            self, self.rw, Path(dr),
+            download_manager=self._dl_manager_window)
+        dlg.exec()
+
+    def _download_collection(self):
+        t = self.addr.text().strip()
         m = re.search(r'id=(\d+)', t)
         if m:
             coll_id = m.group(1)
@@ -305,9 +363,8 @@ class WorkshopBrowserDialog(QDialog):
             coll_id = m2.group(1) if m2 else coll_id.strip()
 
         if not coll_id.isdigit():
-            QMessageBox.warning(
-                self, "Invalid ID",
-                "Could not find a valid collection ID.")
+            QMessageBox.warning(self, "Invalid ID",
+                                "Could not find a valid collection ID.")
             return
 
         self.status_lbl.setText(f"Fetching collection {coll_id}...")
@@ -315,19 +372,16 @@ class WorkshopBrowserDialog(QDialog):
 
         mod_ids, error = self._fetch_collection(coll_id)
         if error:
-            QMessageBox.warning(
-                self, "Collection Error", error)
+            QMessageBox.warning(self, "Collection Error", error)
             self.status_lbl.setText("Ready")
             return
 
         if not mod_ids:
-            QMessageBox.information(
-                self, "Empty Collection",
-                "No mods found in this collection.")
+            QMessageBox.information(self, "Empty Collection",
+                                    "No mods found in this collection.")
             self.status_lbl.setText("Ready")
             return
 
-        # Filter already installed
         to_download = [mid for mid in mod_ids
                        if mid not in self.installed_ids]
         already     = len(mod_ids) - len(to_download)
@@ -353,9 +407,8 @@ class WorkshopBrowserDialog(QDialog):
             return
 
         if not self._dlq.is_configured:
-            QMessageBox.warning(
-                self, "SteamCMD",
-                "SteamCMD not configured. Set path in Settings.")
+            QMessageBox.warning(self, "SteamCMD",
+                                "SteamCMD not configured.")
             return
 
         for mod_id in to_download:
@@ -426,34 +479,37 @@ class WorkshopBrowserDialog(QDialog):
         return unique, ""
 
     def _on_started(self, wid, title):
-        self.sidebar.add_download(wid, title)
         self.status_lbl.setText(f"Downloading: {title}")
+        # Show download manager automatically when download begins
+        self._dl_manager_window.show()
+        self._dl_manager_window.raise_()
 
     def _on_progress(self, wid, pct):
-        self.sidebar.update_progress(wid, pct)
+        pass
 
     def _on_finished(self, wid, ok, msg):
-        # Use title already stored by _on_started rather than blocking network call
         title = wid
-        for i in range(self.sidebar.dl_list.count()):
-            it = self.sidebar.dl_list.item(i)
-            if it and it.data(Qt.ItemDataRole.UserRole) == wid:
-                raw = it.text()
-                if raw.startswith(('⬇ ', '✅ ', '❌ ')):
-                    raw = raw[2:]
-                title = raw.split('—')[0].strip() if '—' in raw else raw.strip()
-                break
-
-        self.sidebar.finish_download(wid, ok, title)
+        if ok:
+            self.installed_ids.add(wid)
+            self.inst_lbl.setText(f"{len(self.installed_ids)} installed")
+            self.status_lbl.setText(f"Done: {title}")
+            self._link_mod(wid)
+            self._inject()
+            QTimer.singleShot(500,  self._inject)
+            QTimer.singleShot(1500, self._inject)
+            QTimer.singleShot(3000, self._inject)
+        else:
+            self.status_lbl.setText(f"Failed: {msg[:40]}")
 
         if ok:
             self.installed_ids.add(wid)
             self.inst_lbl.setText(f"{len(self.installed_ids)} installed")
             self.status_lbl.setText(f"Done: {title}")
             self._link_mod(wid)
-            self._refresh_sidebar()
             self._inject()
-            QTimer.singleShot(800, self._inject)
+            QTimer.singleShot(500,  self._inject)
+            QTimer.singleShot(1500, self._inject)
+            QTimer.singleShot(3000, self._inject)
         else:
             self.status_lbl.setText(f"Failed: {msg[:40]}")
 
@@ -473,9 +529,7 @@ class WorkshopBrowserDialog(QDialog):
     # ── Mod management ───────────────────────────────────────────
 
     def _refresh_sidebar(self):
-        dr = self._settings.get('data_root', '')
-        if dr:
-            self.sidebar.refresh_mods(Path(dr) / 'mods')
+        pass
 
     def _handle_delete(self, wid, action):
         dr = self._settings.get('data_root', '')

@@ -46,14 +46,18 @@ class Launcher:
                game_mods_dir: Optional[Path] = None,
                all_mods: Optional[dict] = None) -> LaunchResult:
 
-        if not os.path.isfile(self.rimworld_exe):
+        exe_to_use = (instance.rimworld_exe_override
+                      if getattr(instance, 'rimworld_exe_override', '')
+                      else self.rimworld_exe)
+
+        if not os.path.isfile(exe_to_use):
             return LaunchResult(
                 False,
-                f"RimWorld executable not found: {self.rimworld_exe}")
+                f"RimWorld executable not found: {exe_to_use}")
         
         if os.name != 'nt':
             import stat
-            exe_path    = Path(self.rimworld_exe)
+            exe_path    = Path(exe_to_use)
             current_mode = exe_path.stat().st_mode
             exe_path.chmod(current_mode |
                         stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
@@ -107,7 +111,7 @@ class Launcher:
         instance_abs = str(instance.path.resolve())
 
         args: list[str] = [
-            self.rimworld_exe,
+            exe_to_use,
             f'-savedatafolder={instance_abs}',
         ]
         if log_to_instance:
@@ -137,7 +141,7 @@ class Launcher:
             self._launch_time = datetime.now()
             process = subprocess.Popen(
                 args,
-                cwd=os.path.dirname(self.rimworld_exe),
+                cwd=os.path.dirname(exe_to_use),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )

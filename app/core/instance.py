@@ -25,6 +25,7 @@ class Instance:
     ignored_deps: list[str] = field(default_factory=list)
 
     mod_workshop_ids: dict[str, str] = field(default_factory=dict)
+    rimworld_exe_override: str = ''
 
     @classmethod
     def load(cls, path: Path) -> Optional['Instance']:
@@ -50,6 +51,7 @@ class Instance:
                 mods_configured=d.get('mods_configured', False),
                 ignored_deps=d.get('ignored_deps', []),
                 mod_workshop_ids=d.get('mod_workshop_ids', {}),
+                rimworld_exe_override=d.get('rimworld_exe_override', ''),
             )
         except (json.JSONDecodeError, KeyError, OSError):
             return None
@@ -72,6 +74,7 @@ class Instance:
             'mods_configured': self.mods_configured,
             'ignored_deps': self.ignored_deps,
             'mod_workshop_ids': self.mod_workshop_ids,
+            'rimworld_exe_override': self.rimworld_exe_override,
         }
         tmp = self.path / 'instance.json.tmp'
         try:

@@ -98,8 +98,9 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
         hdr = QHBoxLayout()
         hdr.addWidget(QLabel(f"<b>{self.inst.name}</b>"))
         self.cnt = QLabel("0 active · 0 inactive")
+        self.cnt.setObjectName("subheading")
         self.cnt.setStyleSheet(
-            "color:#74d4cc;font-weight:bold;font-size:11px;")
+            f"font-weight:bold;font-size:11px;")
         hdr.addWidget(self.cnt)
         hdr.addStretch()
         lo.addLayout(hdr)
@@ -199,19 +200,34 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
         }.get(cat, cat)
 
     def _style_chip(self, btn: QPushButton, active: bool, count: int):
-        """Apply visual style to a chip button based on active state and count."""
+        from app.core.app_settings import AppSettings
+        from app.ui.styles import get_colors
+        c     = get_colors(AppSettings.instance().theme)
         label = btn.property('label')
         color = btn.property('color')
 
         btn.setText(f"{label} {count}")
 
         if count == 0:
-            # No issues of this type — always dim regardless of active state
             btn.setStyleSheet(
-                "font-size:10px; padding:1px 6px; border-radius:3px; "
-                "background:#2a2a2a; color:#444444; border:1px solid #333;")
+                f"font-size:10px; padding:1px 6px; border-radius:3px; "
+                f"background:{c['bg_mid']}; color:{c['text_dim']}; "
+                f"border:1px solid {c['border']};")
             btn.setEnabled(False)
             return
+
+        btn.setEnabled(True)
+
+        if active:
+            btn.setStyleSheet(
+                f"font-size:10px; padding:1px 6px; border-radius:3px; "
+                f"background:{color}; color:{c['bg']}; "
+                f"font-weight:bold; border:1px solid {color};")
+        else:
+            btn.setStyleSheet(
+                f"font-size:10px; padding:1px 6px; border-radius:3px; "
+                f"background:{c['bg_mid']}; color:{color}; "
+                f"border:1px solid {color};")
 
         btn.setEnabled(True)
 
@@ -303,8 +319,9 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
         lo.addWidget(self.avail)
 
         self.empty_hint = QLabel(
-            "<i style='color:#555;font-size:10px;'>"
-            "No inactive mods. Click 📚 Library to add mods.</i>")
+            "<i style='font-size:10px;'>"
+            "No inactive mods. Click Library to add mods.</i>")
+        self.empty_hint.setObjectName("statLabel")
         self.empty_hint.setWordWrap(True)
         self.empty_hint.hide()
         lo.addWidget(self.empty_hint)
@@ -593,10 +610,13 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
 
         # Update master filter button color
         worst_color = format_issue_color(counts)
+        from app.core.app_settings import AppSettings
+        from app.ui.styles import get_colors
+        c = get_colors(AppSettings.instance().theme)
         if self._filter_on:
             self.filter_btn.setStyleSheet(
                 f"font-size:10px; padding:1px 8px; border-radius:3px; "
-                f"background:{worst_color}; color:#1a1a1a; font-weight:bold;")
+                f"background:{worst_color}; color:{c['bg']}; font-weight:bold;")
         else:
             self.filter_btn.setStyleSheet(
                 f"font-size:10px; padding:1px 8px; border-radius:3px; "

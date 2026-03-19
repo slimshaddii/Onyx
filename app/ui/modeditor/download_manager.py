@@ -1,33 +1,38 @@
 """
-Persistent download manager window.
-Shows all active and completed downloads with per-item cancel.
-Pause is not supported by SteamCMD — cancel and requeue is the equivalent.
+Persistent download manager window — FDM-style.
+Shows speed, ETA, percent per item.
+Speed/ETA requires file sizes pre-fetched from Steam API.
 """
 
+import time
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QProgressBar, QScrollArea, QFrame, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QColor
-
 from app.core.steamcmd import DownloadQueue
+from app.core.app_settings import AppSettings
+from app.ui.styles import get_colors
+
+
+def _c(key: str) -> str:
+    return get_colors(AppSettings.instance().theme)[key]
 
 
 class DownloadItemWidget(QFrame):
-    """One row in the download manager — shows name, progress, cancel."""
+    cancel_requested = pyqtSignal(str)
 
-    cancel_requested = pyqtSignal(str)  # workshop_id
-
-    def __init__(self, workshop_id: str, name: str, parent=None):
+    def __init__(self, workshop_id: str, name: str,
+                 file_size: int = 0, parent=None):
         super().__init__(parent)
-        self.workshop_id = workshop_id
-        self._done       = False
+        self.workshop_id  = workshop_id
+        self.file_size    = file_size   # bytes, 0 = unknown
+        self._done        = False
+        self._start_time  = 0.0
+        self._last_pct    = 0
 
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet(
-            "QFrame { background:#2a2a2a; border-radius:4px; "
-            "border:1px solid #3a3a3a; margin:1px; }")
+        self._apply_frame_style('normal')
 
         lo = QVBoxLayout(self)
         lo.setContentsMargins(8, 6, 8, 6)
@@ -36,38 +41,19 @@ class DownloadItemWidget(QFrame):
         # Title row
         title_row = QHBoxLayout()
         self._name_lbl = QLabel(name)
-        self._name_lbl.setStyleSheet(
-            "font-size:11px; font-weight:bold; color:#ffffff; "
-            "background:transparent; border:none;")
         self._name_lbl.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         title_row.addWidget(self._name_lbl, 1)
 
         self._status_lbl = QLabel("Queued")
-        self._status_lbl.setStyleSheet(
-            "font-size:10px; color:#888888; "
-            "background:transparent; border:none;")
         title_row.addWidget(self._status_lbl)
 
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.setFixedSize(52, 20)
-        self._cancel_btn.setStyleSheet("""
-            QPushButton {
-                font-size:9px; padding:1px 4px;
-                background:#3a2a2a; color:#cc6666;
-                border:1px solid #663333; border-radius:3px;
-            }
-            QPushButton:hover { background:#4a2a2a; color:#ff6666; }
-            QPushButton:pressed { background:#2a1a1a; }
-            QPushButton:disabled {
-                background:#2a2a2a; color:#555555;
-                border-color:#333333;
-            }
-        """)
+        self._apply_cancel_style('cancel')
         self._cancel_btn.clicked.connect(
             lambda: self.cancel_requested.emit(self.workshop_id))
         title_row.addWidget(self._cancel_btn)
-
         lo.addLayout(title_row)
 
         # Progress bar
@@ -76,108 +62,162 @@ class DownloadItemWidget(QFrame):
         self._bar.setValue(0)
         self._bar.setFixedHeight(6)
         self._bar.setTextVisible(False)
-        self._bar.setStyleSheet("""
-            QProgressBar {
-                background:#1a1a1a; border-radius:3px; border:none;
-            }
-            QProgressBar::chunk {
-                background:#74d4cc; border-radius:3px;
-            }
-        """)
+        self._apply_bar_style('normal')
         lo.addWidget(self._bar)
 
-        # Log line
-        self._log_lbl = QLabel("")
-        self._log_lbl.setStyleSheet(
-            "font-size:9px; color:#555555; "
-            "background:transparent; border:none;")
-        self._log_lbl.setSizePolicy(
+        # Detail row: speed + ETA + size
+        detail_row = QHBoxLayout()
+        self._detail_lbl = QLabel("")
+        self._detail_lbl.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        lo.addWidget(self._log_lbl)
+        detail_row.addWidget(self._detail_lbl)
+        lo.addLayout(detail_row)
+
+        self._refresh_styles()
+
+    def _refresh_styles(self):
+        c = get_colors(AppSettings.instance().theme)
+        self._name_lbl.setStyleSheet(
+            f"font-size:11px; font-weight:bold; color:{c['text']}; "
+            f"background:transparent; border:none;")
+        self._status_lbl.setStyleSheet(
+            f"font-size:10px; color:{c['text_dim']}; "
+            f"background:transparent; border:none;")
+        self._detail_lbl.setStyleSheet(
+            f"font-size:9px; color:{c['text_dim']}; "
+            f"background:transparent; border:none;")
+
+    def _apply_frame_style(self, state: str):
+        c = get_colors(AppSettings.instance().theme)
+        styles = {
+            'normal':  f"QFrame {{ background:{c['bg_mid']}; border-radius:4px; border:1px solid {c['border']}; margin:1px; }}",
+            'success': f"QFrame {{ background:{c['bg_mid']}; border-radius:4px; border:1px solid {c['success']}; margin:1px; }}",
+            'failed':  f"QFrame {{ background:{c['bg_mid']}; border-radius:4px; border:1px solid {c['error']}; margin:1px; }}",
+        }
+        self.setStyleSheet(styles.get(state, styles['normal']))
+
+    def _apply_bar_style(self, state: str):
+        c = get_colors(AppSettings.instance().theme)
+        colors = {
+            'normal':  c['accent'],
+            'success': c['success'],
+            'failed':  c['error'],
+        }
+        color = colors.get(state, c['accent'])
+        self._bar.setStyleSheet(f"""
+            QProgressBar {{
+                background:{c['bg_panel']}; border-radius:3px; border:none;
+            }}
+            QProgressBar::chunk {{
+                background:{color}; border-radius:3px;
+            }}
+        """)
+
+    def _apply_cancel_style(self, mode: str):
+        c = get_colors(AppSettings.instance().theme)
+        if mode == 'cancel':
+            self._cancel_btn.setStyleSheet(f"""
+                QPushButton {{
+                    font-size:9px; padding:1px 4px;
+                    background:{c['bg_mid']}; color:{c['error']};
+                    border:1px solid {c['error']}; border-radius:3px;
+                }}
+                QPushButton:hover {{ background:{c['bg_card']}; }}
+                QPushButton:disabled {{ color:{c['text_dim']}; border-color:{c['border']}; }}
+            """)
+        else:  # clear
+            self._cancel_btn.setStyleSheet(f"""
+                QPushButton {{
+                    font-size:9px; padding:1px 4px;
+                    background:{c['bg_mid']}; color:{c['text_dim']};
+                    border:1px solid {c['border']}; border-radius:3px;
+                }}
+                QPushButton:hover {{ background:{c['bg_card']}; color:{c['text']}; }}
+            """)
+
+    def set_downloading(self):
+        self._start_time = time.monotonic()
+        self._last_pct   = 0
+        c = get_colors(AppSettings.instance().theme)
+        self._status_lbl.setText("Downloading…")
+        self._status_lbl.setStyleSheet(
+            f"font-size:10px; color:{c['accent']}; "
+            f"background:transparent; border:none;")
 
     def set_progress(self, pct: int):
         self._bar.setValue(pct)
-        self._status_lbl.setText(f"{pct}%")
+        self._last_pct = pct
 
-    def set_downloading(self):
-        self._status_lbl.setText("Downloading…")
-        self._status_lbl.setStyleSheet(
-            "font-size:10px; color:#74d4cc; "
-            "background:transparent; border:none;")
+        if self.file_size and self._start_time and pct > 0:
+            elapsed     = time.monotonic() - self._start_time
+            done_bytes  = int(self.file_size * pct / 100)
+            speed       = done_bytes / elapsed if elapsed > 0 else 0
+            remain_bytes = self.file_size - done_bytes
+            eta         = remain_bytes / speed if speed > 0 else 0
+
+            speed_str = _fmt_speed(speed)
+            eta_str   = _fmt_eta(eta)
+            size_str  = _fmt_size(self.file_size)
+            done_str  = _fmt_size(done_bytes)
+
+            self._status_lbl.setText(f"{pct}%")
+            self._detail_lbl.setText(
+                f"{done_str} / {size_str}  •  {speed_str}  •  ETA {eta_str}")
+        else:
+            self._status_lbl.setText(f"{pct}%")
+            self._detail_lbl.setText("")
 
     def set_log(self, line: str):
-        # Show only short meaningful lines
-        if len(line) > 60:
-            line = line[:57] + "…"
-        self._log_lbl.setText(line)
+        if len(line) > 70:
+            line = line[:67] + "…"
+        self._detail_lbl.setText(line)
 
     def set_done(self, success: bool):
         self._done = True
         self._bar.setValue(100)
+
+        if success:
+            c = get_colors(AppSettings.instance().theme)
+            self._status_lbl.setText("Complete")
+            self._status_lbl.setStyleSheet(
+                f"font-size:10px; color:{c['success']}; "
+                f"background:transparent; border:none;")
+            self._apply_bar_style('success')
+            self._apply_frame_style('success')
+            if self.file_size:
+                elapsed = time.monotonic() - self._start_time
+                avg_speed = self.file_size / elapsed if elapsed > 0 else 0
+                self._detail_lbl.setText(
+                    f"{_fmt_size(self.file_size)}  •  "
+                    f"avg {_fmt_speed(avg_speed)}")
+        else:
+            c = get_colors(AppSettings.instance().theme)
+            self._status_lbl.setText("Failed")
+            self._status_lbl.setStyleSheet(
+                f"font-size:10px; color:{c['error']}; "
+                f"background:transparent; border:none;")
+            self._apply_bar_style('failed')
+            self._apply_frame_style('failed')
+
         self._cancel_btn.setText("Clear")
-        self._cancel_btn.setEnabled(True)
-        # Disconnect cancel signal, connect clear signal instead
         try:
             self._cancel_btn.clicked.disconnect()
         except Exception:
             pass
         self._cancel_btn.clicked.connect(self._self_remove)
-        self._cancel_btn.setStyleSheet("""
-            QPushButton {
-                font-size:9px; padding:1px 4px;
-                background:#2a2a2a; color:#888888;
-                border:1px solid #3a3a3a; border-radius:3px;
-            }
-            QPushButton:hover { background:#3a3a3a; color:#aaaaaa; }
-        """)
+        self._apply_cancel_style('clear')
 
-        if success:
-            self._status_lbl.setText("Complete")
-            self._status_lbl.setStyleSheet(
-                "font-size:10px; color:#4CAF50; "
-                "background:transparent; border:none;")
-            self._bar.setStyleSheet("""
-                QProgressBar {
-                    background:#1a1a1a; border-radius:3px; border:none;
-                }
-                QProgressBar::chunk {
-                    background:#4CAF50; border-radius:3px;
-                }
-            """)
-            self.setStyleSheet(
-                "QFrame { background:#1a2a1a; border-radius:4px; "
-                "border:1px solid #2a4a2a; margin:1px; }")
-        else:
-            self._status_lbl.setText("Failed")
-            self._status_lbl.setStyleSheet(
-                "font-size:10px; color:#ff4444; "
-                "background:transparent; border:none;")
-            self._bar.setStyleSheet("""
-                QProgressBar {
-                    background:#1a1a1a; border-radius:3px; border:none;
-                }
-                QProgressBar::chunk {
-                    background:#ff4444; border-radius:3px;
-                }
-            """)
-            self.setStyleSheet(
-                "QFrame { background:#2a1a1a; border-radius:4px; "
-                "border:1px solid #4a2a2a; margin:1px; }")
-            
     def _self_remove(self):
-        """Remove this item from the manager when Clear is clicked."""
         parent_lo = self.parent().layout() if self.parent() else None
         if parent_lo:
             parent_lo.removeWidget(self)
         self.deleteLater()
-        # Notify manager to update count
         mgr = self._find_manager()
         if mgr:
-            self.workshop_id and mgr._items.pop(self.workshop_id, None)
+            mgr._items.pop(self.workshop_id, None)
             mgr._update_count()
 
     def _find_manager(self):
-        """Walk up widget tree to find DownloadManagerWindow."""
         w = self.parent()
         while w:
             if isinstance(w, DownloadManagerWindow):
@@ -190,79 +230,65 @@ class DownloadItemWidget(QFrame):
 
 
 class DownloadManagerWindow(QWidget):
-    """
-    Non-modal download manager window.
-    Shows all downloads with individual progress bars and cancel buttons.
-    Call show() to open — stays open until user closes it.
-    """
-
     def __init__(self, queue: DownloadQueue, parent=None):
         super().__init__(parent, Qt.WindowType.Window)
-        self.queue = queue
+        self.queue   = queue
         self._items: dict[str, DownloadItemWidget] = {}
+        self._sizes: dict[str, int] = {}   # pre-fetched file sizes
 
         self.setWindowTitle("Download Manager — Onyx")
-        self.setMinimumSize(420, 300)
-        self.resize(480, 400)
+        self.setMinimumSize(500, 380)
+        self.resize(560, 460)
 
         self._build()
         self._connect()
 
     def _build(self):
+        c  = get_colors(AppSettings.instance().theme)
         lo = QVBoxLayout(self)
         lo.setContentsMargins(8, 8, 8, 8)
         lo.setSpacing(6)
 
-        # Header
+        # ── Header ────────────────────────────────────────────────────────
         hdr = QHBoxLayout()
         title = QLabel("Download Manager")
-        title.setStyleSheet(
-            "font-size:13px; font-weight:bold; color:#74d4cc;")
+        title.setObjectName("heading")
         hdr.addWidget(title)
         hdr.addStretch()
 
         self._count_lbl = QLabel("0 active")
-        self._count_lbl.setStyleSheet("font-size:10px; color:#888;")
+        self._count_lbl.setObjectName("statLabel")
         hdr.addWidget(self._count_lbl)
 
         cancel_all_btn = QPushButton("Cancel All")
         cancel_all_btn.setFixedHeight(22)
-        cancel_all_btn.setStyleSheet("""
-            QPushButton {
-                font-size:10px; padding:1px 8px;
-                background:#3a2a2a; color:#cc6666;
-                border:1px solid #663333; border-radius:3px;
-            }
-            QPushButton:hover { background:#4a2a2a; color:#ff6666; }
-            QPushButton:pressed { background:#2a1a1a; }
-        """)
+        cancel_all_btn.setObjectName("dangerButton")
         cancel_all_btn.clicked.connect(self._cancel_all)
         hdr.addWidget(cancel_all_btn)
 
         clear_btn = QPushButton("Clear Done")
         clear_btn.setFixedHeight(22)
-        clear_btn.setStyleSheet("""
-            QPushButton {
-                font-size:10px; padding:1px 8px;
-                background:#2a2a2a; color:#888888;
-                border:1px solid #3a3a3a; border-radius:3px;
-            }
-            QPushButton:hover { background:#3a3a3a; color:#aaaaaa; }
-            QPushButton:pressed { background:#1a1a1a; }
-        """)
         clear_btn.clicked.connect(self._clear_done)
         hdr.addWidget(clear_btn)
-
         lo.addLayout(hdr)
 
-        # Scroll area for download items
+        # ── Overall progress ──────────────────────────────────────────────
+        self._overall_bar = QProgressBar()
+        self._overall_bar.setRange(0, 100)
+        self._overall_bar.setValue(0)
+        self._overall_bar.setFixedHeight(4)
+        self._overall_bar.setTextVisible(False)
+        self._overall_bar.hide()
+        lo.addWidget(self._overall_bar)
+
+        # ── Scroll area ───────────────────────────────────────────────────
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet("QScrollArea { border:none; }")
 
-        self._container = QWidget()
+        self._container    = QWidget()
         self._container_lo = QVBoxLayout(self._container)
         self._container_lo.setContentsMargins(0, 0, 0, 0)
         self._container_lo.setSpacing(4)
@@ -271,10 +297,9 @@ class DownloadManagerWindow(QWidget):
         scroll.setWidget(self._container)
         lo.addWidget(scroll, 1)
 
-        # Status bar
+        # ── Status bar ────────────────────────────────────────────────────
         self._status_lbl = QLabel("Ready")
-        self._status_lbl.setStyleSheet(
-            "font-size:10px; color:#555; padding:2px 0;")
+        self._status_lbl.setObjectName("statLabel")
         lo.addWidget(self._status_lbl)
 
     def _connect(self):
@@ -284,25 +309,15 @@ class DownloadManagerWindow(QWidget):
         self.queue.job_log.connect(self._on_log)
         self.queue.queue_empty.connect(self._on_queue_empty)
 
-    def _disconnect(self):
-        try:
-            self.queue.job_started.disconnect(self._on_started)
-            self.queue.job_progress.disconnect(self._on_progress)
-            self.queue.job_finished.disconnect(self._on_finished)
-            self.queue.job_log.disconnect(self._on_log)
-            self.queue.queue_empty.disconnect(self._on_queue_empty)
-        except Exception:
-            pass
-
     # ── Public API ────────────────────────────────────────────────────────
 
     def add_download(self, workshop_id: str, name: str):
-        """Add a download item to the manager UI."""
         if workshop_id in self._items:
             return
-        item = DownloadItemWidget(workshop_id, name, self._container)
+        size = self._sizes.get(workshop_id, 0)
+        item = DownloadItemWidget(
+            workshop_id, name, size, self._container)
         item.cancel_requested.connect(self._cancel_one)
-        # Insert before the trailing stretch
         self._container_lo.insertWidget(
             self._container_lo.count() - 1, item)
         self._items[workshop_id] = item
@@ -310,18 +325,40 @@ class DownloadManagerWindow(QWidget):
 
     def queue_and_show(self, mods: list[tuple[str, str]]):
         """
-        Add all items to UI first, then enqueue all at once.
-        Prevents queue_empty firing before all items are queued.
+        Pre-fetch file sizes from Steam API (background thread),
+        add all items to UI, then enqueue.
         """
         for wid, name in mods:
             self.add_download(wid, name)
 
+        # Enqueue immediately so downloads start
         for wid, name in mods:
             self.queue.enqueue(wid, name)
+
+        # Fetch sizes in background — updates items when ready
+        ws_ids = [wid for wid, _ in mods]
+        import threading
+        threading.Thread(
+            target=self._fetch_sizes,
+            args=(ws_ids,),
+            daemon=True).start()
 
         self.show()
         self.raise_()
         self.activateWindow()
+
+    def _fetch_sizes(self, workshop_ids: list[str]):
+        """Background: fetch file sizes then update items."""
+        try:
+            from app.core.mod_update_checker import get_workshop_file_sizes
+            sizes = get_workshop_file_sizes(workshop_ids)
+            self._sizes.update(sizes)
+            # Update existing items that haven't started yet
+            for wid, size in sizes.items():
+                if wid in self._items and not self._items[wid]._done:
+                    self._items[wid].file_size = size
+        except Exception:
+            pass  # Size fetch failure is non-fatal — shows % only
 
     # ── Slots ─────────────────────────────────────────────────────────────
 
@@ -330,19 +367,36 @@ class DownloadManagerWindow(QWidget):
             self.add_download(wid, title)
         self._items[wid].set_downloading()
         self._status_lbl.setText(f"Downloading: {title}")
+        self._overall_bar.show()
         self._update_count()
 
     def _on_progress(self, wid: str, pct: int):
         if wid in self._items:
             self._items[wid].set_progress(pct)
+        self._update_overall()
 
     def _on_finished(self, wid: str, ok: bool, msg: str):
         if wid in self._items:
             self._items[wid].set_done(ok)
+            # Record timestamp on success
+            if ok:
+                self._record_timestamp(wid)
         self._update_count()
         if not ok:
             self._status_lbl.setText(
                 f"Failed: {msg[:50]}" if msg else "A download failed.")
+        self._update_overall()
+
+    def _record_timestamp(self, workshop_id: str):
+        try:
+            from app.core.mod_update_checker import ModTimestampStore
+            from pathlib import Path
+            dr = AppSettings.instance().data_root
+            if dr:
+                store = ModTimestampStore(Path(dr))
+                store.record(workshop_id)
+        except Exception:
+            pass
 
     def _on_log(self, wid: str, line: str):
         if wid in self._items:
@@ -352,13 +406,12 @@ class DownloadManagerWindow(QWidget):
                 self._items[wid].set_log(line)
 
     def _on_queue_empty(self):
-        done  = sum(1 for it in self._items.values() if it.is_done())
-        total = len(self._items)
         ok    = sum(1 for it in self._items.values()
                     if it.is_done() and
                     it._status_lbl.text() == "Complete")
-        self._status_lbl.setText(
-            f"All done — {ok}/{total} succeeded")
+        total = len(self._items)
+        self._status_lbl.setText(f"All done — {ok}/{total} succeeded")
+        self._overall_bar.setValue(100)
         self._update_count()
 
     def _cancel_one(self, wid: str):
@@ -377,22 +430,55 @@ class DownloadManagerWindow(QWidget):
         self._update_count()
 
     def _clear_done(self):
-        to_remove = [wid for wid, it in self._items.items()
-                     if it.is_done()]
-        for wid in to_remove:
-            item = self._items.pop(wid)
-            self._container_lo.removeWidget(item)
-            item.deleteLater()
+        for wid in list(self._items.keys()):
+            item = self._items[wid]
+            if item.is_done():
+                self._items.pop(wid)
+                self._container_lo.removeWidget(item)
+                item.deleteLater()
         self._update_count()
 
     def _update_count(self):
-        active = sum(1 for it in self._items.values()
-                     if not it.is_done())
+        active = sum(1 for it in self._items.values() if not it.is_done())
         total  = len(self._items)
-        self._count_lbl.setText(
-            f"{active} active / {total} total")
+        self._count_lbl.setText(f"{active} active / {total} total")
+
+    def _update_overall(self):
+        items = list(self._items.values())
+        if not items:
+            return
+        avg = sum(it._bar.value() for it in items) // len(items)
+        self._overall_bar.setValue(avg)
 
     def closeEvent(self, e):
-        # Don't disconnect — queue keeps running in background
-        # User can reopen via toolbar button
         e.accept()
+
+
+# ── Format helpers ────────────────────────────────────────────────────────────
+
+def _fmt_speed(bps: float) -> str:
+    if bps >= 1024 * 1024:
+        return f"{bps / (1024*1024):.1f} MB/s"
+    if bps >= 1024:
+        return f"{bps / 1024:.0f} KB/s"
+    return f"{bps:.0f} B/s"
+
+
+def _fmt_eta(seconds: float) -> str:
+    if seconds <= 0 or seconds > 86400:
+        return "--:--"
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
+def _fmt_size(num_bytes: int) -> str:
+    if num_bytes >= 1024 * 1024 * 1024:
+        return f"{num_bytes / (1024**3):.1f} GB"
+    if num_bytes >= 1024 * 1024:
+        return f"{num_bytes / (1024**2):.1f} MB"
+    if num_bytes >= 1024:
+        return f"{num_bytes / 1024:.0f} KB"
+    return f"{num_bytes} B"

@@ -29,6 +29,7 @@ _DEFAULTS: dict = {
     'auto_backup_on_launch': True,
     'backup_count':          3,
     'offered_import':        False,
+    'update_check_mode':     'manual',
     'theme':                 'dark',
 }
 
@@ -152,6 +153,14 @@ class AppSettings:
     @property
     def offered_import(self) -> bool:
         return bool(self._data.get('offered_import', False))
+    
+    @property
+    def update_check_mode(self) -> str:
+        return self._data.get('update_check_mode', 'manual')
+
+    @update_check_mode.setter
+    def update_check_mode(self, v: str):
+        self._data['update_check_mode'] = v
 
     @offered_import.setter
     def offered_import(self, v: bool):

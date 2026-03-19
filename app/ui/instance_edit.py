@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QLabel, QPushButton, QTextEdit, QListWidget, QListWidgetItem,
     QGroupBox, QGridLayout, QLineEdit, QCheckBox, QMessageBox,
-    QFileDialog, QScrollArea, QFrame,
+    QFileDialog, QScrollArea, QFrame, QInputDialog,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from app.core.instance import Instance
@@ -163,16 +163,7 @@ class InstanceEditDialog(QDialog):
 
         self.saves_list = QListWidget()
         self._save_files = self.inst.get_save_files()
-
-        for s in self._save_files:
-            try:
-                dt = datetime.fromisoformat(
-                    s['modified']).strftime("%b %d %H:%M")
-            except Exception:
-                dt = s['modified'][:16]
-            from app.utils.file_utils import human_size
-            self.saves_list.addItem(
-                f"📄 {s['name']}  —  {human_size(s['size'])}  —  {dt}")
+        self._populate_saves_list()
 
         if not self.saves_list.count():
             lo.addWidget(QLabel("No saves yet."))
@@ -185,7 +176,11 @@ class InstanceEditDialog(QDialog):
             lambda: self._open_path(self.inst.saves_dir))
         sv_btns.addWidget(sv_open_btn)
 
-        del_btn = QPushButton("🗑 Delete Save")
+        ren_btn = QPushButton("Rename Save")
+        ren_btn.clicked.connect(self._rename_selected_save)
+        sv_btns.addWidget(ren_btn)
+
+        del_btn = QPushButton("Delete Save")
         del_btn.setObjectName("dangerButton")
         del_btn.clicked.connect(self._delete_selected_save)
         sv_btns.addWidget(del_btn)
@@ -193,6 +188,54 @@ class InstanceEditDialog(QDialog):
         sv_btns.addStretch()
         lo.addLayout(sv_btns)
         return w
+
+    def _populate_saves_list(self):
+        self.saves_list.clear()
+        from app.utils.file_utils import human_size
+        for s in self._save_files:
+            try:
+                dt = datetime.fromisoformat(
+                    s['modified']).strftime("%b %d %H:%M")
+            except Exception:
+                dt = s['modified'][:16]
+            self.saves_list.addItem(
+                f"📄 {s['name']}  —  {human_size(s['size'])}  —  {dt}")
+
+    def _rename_selected_save(self):
+        row = self.saves_list.currentRow()
+        if row < 0 or row >= len(self._save_files):
+            QMessageBox.information(
+                self, "Rename Save", "Select a save to rename.")
+            return
+
+        s        = self._save_files[row]
+        old_path = Path(s['path'])
+        old_name = s['name']
+
+        new_name, ok = QInputDialog.getText(
+            self, "Rename Save", "New name:", text=old_name)
+        if not ok or not new_name.strip():
+            return
+        new_name = new_name.strip()
+        if new_name == old_name:
+            return
+
+        new_path = old_path.parent / f"{new_name}.rws"
+        if new_path.exists():
+            QMessageBox.warning(
+                self, "Rename Save",
+                f"A save named '{new_name}' already exists.")
+            return
+
+        try:
+            old_path.rename(new_path)
+            # Update internal record
+            self._save_files[row]['name'] = new_name
+            self._save_files[row]['path'] = str(new_path)
+            self._populate_saves_list()
+            self.saves_list.setCurrentRow(row)
+        except Exception as e:
+            QMessageBox.critical(self, "Rename Failed", str(e))
 
     def _delete_selected_save(self):
         row = self.saves_list.currentRow()
@@ -348,6 +391,32 @@ class InstanceEditDialog(QDialog):
             "Common: -popupwindow, -screen-fullscreen 0, "
             "-screen-width 1920, -screen-height 1080, -force-d3d11"
             "</small>"))
+
+        # ── RimWorld exe override ─────────────────────────────────────────
+        exe_group = QGroupBox("RimWorld Override (Multi-version)")
+        exe_lo    = QVBoxLayout()
+        exe_lo.addWidget(QLabel(
+            "Leave blank to use the global RimWorld path from Settings.\n"
+            "Set this to use a different RimWorld version for this instance."))
+        exe_row = QHBoxLayout()
+        self._exe_override = QLineEdit()
+        self._exe_override.setText(
+            getattr(self.inst, 'rimworld_exe_override', ''))
+        self._exe_override.setPlaceholderText(
+            "e.g. D:/Games/RimWorld15/RimWorldWin64.exe")
+        exe_row.addWidget(self._exe_override, 1)
+        browse_exe = QPushButton("Browse…")
+        browse_exe.setFixedWidth(70)
+        browse_exe.clicked.connect(self._browse_exe_override)
+        exe_row.addWidget(browse_exe)
+        clear_exe = QPushButton("Clear")
+        clear_exe.setFixedWidth(50)
+        clear_exe.clicked.connect(lambda: self._exe_override.clear())
+        exe_row.addWidget(clear_exe)
+        exe_lo.addLayout(exe_row)
+        exe_group.setLayout(exe_lo)
+        lo.addWidget(exe_group)
+
         lo.addStretch()
         return w
 
@@ -488,6 +557,7 @@ class InstanceEditDialog(QDialog):
         if custom:
             args.extend(custom.split())
 
+        self.inst.rimworld_exe_override = self._exe_override.text().strip()
         self.inst.launch_args    = args
         self.inst.mods_configured = self._remember_cb.isChecked()
         self.inst.save()
@@ -524,6 +594,17 @@ class InstanceEditDialog(QDialog):
             subprocess.Popen(['explorer', str(path)])
         else:
             subprocess.Popen(['xdg-open', str(path)])
+
+    def _browse_exe_override(self):
+        import platform
+        if platform.system() == 'Windows':
+            filt = "Executable (*.exe);;All Files (*)"
+        else:
+            filt = "All Files (*)"
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select RimWorld Executable", "", filt)
+        if path:
+            self._exe_override.setText(path)
 
     @staticmethod
     def _fmt(iso: str) -> str:

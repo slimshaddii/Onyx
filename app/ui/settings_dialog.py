@@ -135,6 +135,13 @@ class SettingsDialog(QDialog):
         self.theme_cb = QComboBox()
         self.theme_cb.addItems(["Dark", "Light"])
         g5l.addWidget(self.theme_cb)
+
+        g5l.addWidget(QLabel("Mod updates:"))
+        self.update_cb = QComboBox()
+        self.update_cb.addItem("Check on startup (background)", "auto")
+        self.update_cb.addItem("Manual only",                   "manual")
+        self.update_cb.addItem("Disabled",                      "disabled")
+        g5l.addWidget(self.update_cb)
         g5l.addStretch()
         g5.setLayout(g5l)
         lo.addWidget(g5)
@@ -203,8 +210,9 @@ class SettingsDialog(QDialog):
         for p in self.s.get('extra_mod_paths', []):
             self.paths_list.addItem(p)
         from app.core.app_settings import AppSettings
-        self.theme_cb.setCurrentIndex(
-            0 if AppSettings.instance().theme == 'dark' else 1)
+        mode = AppSettings.instance().update_check_mode
+        idx  = self.update_cb.findData(mode)
+        self.update_cb.setCurrentIndex(max(0, idx))
 
 
     def _detect(self):
@@ -242,7 +250,7 @@ class SettingsDialog(QDialog):
         self.s['download_method'] = self.method.currentData()
         self.s['extra_mod_paths'] = [
             self.paths_list.item(i).text() for i in range(self.paths_list.count())]
-        self.s['theme'] = 'dark' if self.theme_cb.currentIndex() == 0 else 'light'
+        self.s['update_check_mode'] = self.update_cb.currentData()
         self.accept()
 
     def get_settings(self) -> dict:

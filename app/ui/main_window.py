@@ -95,6 +95,9 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(400, self._auto_detect)
         elif not self.settings.get('offered_import'):
             QTimer.singleShot(600, self._offer_import)
+        if self._s.update_check_mode == 'auto':
+            QTimer.singleShot(3000, self._auto_check_updates)
+
 
     # ── RimWorld / mod scan helpers ───────────────────────────────────────────
 
@@ -147,18 +150,28 @@ class MainWindow(QMainWindow):
 
     # ── Theme ─────────────────────────────────────────────────────────────────
 
-    def _apply_theme(self):
+    def _apply_theme(self, force: bool = False):
         from PyQt6.QtWidgets import QApplication
         from app.ui.styles import DARK_STYLESHEET, LIGHT_STYLESHEET
-        app = QApplication.instance()
-        sheet = (DARK_STYLESHEET if self._s.theme == 'dark'
-                else LIGHT_STYLESHEET)
+        app        = QApplication.instance()
+        new_theme  = self._s.theme
+        last_theme = getattr(self, '_last_theme', None)
+
+        sheet = DARK_STYLESHEET if new_theme == 'dark' else LIGHT_STYLESHEET
         app.setStyleSheet(sheet)
-        # Force all widgets to re-evaluate styles after theme switch
-        for widget in app.allWidgets():
-            widget.style().unpolish(widget)
-            widget.style().polish(widget)
-            widget.update()
+
+        # Only repaint all widgets when theme actually changed
+        if force or new_theme != last_theme:
+            self._last_theme = new_theme
+            for widget in app.allWidgets():
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+                widget.update()
+
+        if self.detail.current_instance is not None:
+            self.detail.actions.set_enabled(True)
+        else:
+            self.detail.actions.set_enabled(False)
 
     # ── Shortcuts ─────────────────────────────────────────────────────────────
 
@@ -183,8 +196,13 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         tb.addAction(QAction("🏪 Workshop",      self, triggered=self._on_workshop))
         tb.addAction(QAction("📋 Logs",          self, triggered=self._on_logs))
+        tb.addSeparator()
         tb.addAction(QAction("Downloads", self,
                              triggered=self._on_downloads))
+        tb.addAction(QAction("Library", self,
+                             triggered=self._on_library))
+        tb.addAction(QAction("Check Updates", self,
+                             triggered=self._on_check_updates))
         tb.addSeparator()
         tb.addAction(QAction("⟳ Refresh",        self, triggered=self.refresh))
         spacer = QWidget()
@@ -255,6 +273,7 @@ class MainWindow(QMainWindow):
         self.grid.set_instances(insts)
         n = len(insts)
         self.sl.setText(f"{n} instance{'s' if n != 1 else ''}")
+        # Use cache — don't force rescan on every refresh
         installed = self.rw.get_installed_mods(self._all_mod_paths())
         self.ml.setText(f"{len(installed)} mods installed")
 
@@ -285,9 +304,10 @@ class MainWindow(QMainWindow):
             dr        = _s.data_root
             exe       = _s.rimworld_exe
             onyx_mods = Path(dr)  / 'mods' if dr  else None
-            game_mods = Path(exe).parent / 'Mods' if exe else None
-            all_mods  = self.rw.get_installed_mods(self._all_mod_paths())
+            inst_exe  = getattr(inst, 'rimworld_exe_override', '') or exe
+            game_mods = Path(inst_exe).parent / 'Mods' if inst_exe else None
 
+            all_mods  = self.rw.get_installed_mods(self._all_mod_paths())
             r = self.launcher.launch(
                 inst,
                 inst.launch_args,
@@ -447,6 +467,97 @@ class MainWindow(QMainWindow):
         self._download_manager.raise_()
         self._download_manager.activateWindow()
 
+    def _on_library(self):
+        from app.ui.mod_library_dialog import ModLibraryDialog
+        from pathlib import Path
+        dr = self.settings.get('data_root', '')
+        if not dr:
+            QMessageBox.warning(
+                self, "Library",
+                "Data root not configured. Set it in Settings.")
+            return
+        dlg = ModLibraryDialog(
+            self,
+            Path(dr) / 'mods',
+            download_manager=self._download_manager)
+        dlg.exec()
+        # Rescan in case mods were deleted
+        self._rescan_mods()
+        self.refresh()
+
+
+    # ── Updates ────────────────────────────────────────────────────────────────
+
+    def _on_check_updates(self):
+        from app.ui.mod_update_dialog import ModUpdateDialog
+        from pathlib import Path
+        dr = self.settings.get('data_root', '')
+        if not dr:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "Check Updates",
+                "Data root not configured. Set it in Settings.")
+            return
+        dlg = ModUpdateDialog(
+            self, self.rw, Path(dr),
+            download_manager=self._download_manager)
+        dlg.exec()
+
+    def _auto_check_updates(self):
+        """
+        Background update check on startup.
+        Shows badge count in status bar if updates found.
+        Runs silently — no dialog unless user clicks the status label.
+        """
+        from pathlib import Path
+        import threading
+        dr = self.settings.get('data_root', '')
+        if not dr:
+            return
+
+        rw = self.rw
+
+        def _run():
+            try:
+                from app.core.mod_update_checker import (
+                    ModTimestampStore, check_updates)
+                from app.core.paths import mods_dir
+                from app.core.app_settings import AppSettings
+                _s     = AppSettings.instance()
+                paths  = []
+                if _s.data_root:
+                    paths.append(str(mods_dir(Path(_s.data_root))))
+                if _s.steam_workshop_path:
+                    paths.append(_s.steam_workshop_path)
+
+                installed = rw.get_installed_mods(extra_mod_paths=paths)
+                store     = ModTimestampStore(Path(dr))
+
+                ws_ids:    list[str]      = []
+                names:     dict[str, str] = {}
+                mod_paths: dict[str, str] = {}
+
+                for pid, info in installed.items():
+                    if info.workshop_id:
+                        ws_ids.append(info.workshop_id)
+                        names[info.workshop_id]     = info.name
+                        mod_paths[info.workshop_id] = str(info.path)
+
+                results = check_updates(ws_ids, store, names, mod_paths)
+                updates = [r for r in results if r.has_update]
+
+                if updates:
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(
+                        0,
+                        lambda: self.sl.setText(
+                            f"{len(updates)} mod update(s) available — "
+                            f"click Check Updates"))
+            except Exception:
+                pass
+
+        threading.Thread(target=_run, daemon=True).start()
+
     # ── Settings ──────────────────────────────────────────────────────────────
 
     def _on_settings(self):
@@ -477,7 +588,7 @@ class MainWindow(QMainWindow):
         self.dl_queue.username = self.settings.get('steamcmd_username', '')
         self._update_watcher_paths()
         self._init_rw()
-        self._apply_theme()
+        self._apply_theme(force=True)
         self.refresh()
 
     # ── Auto-detect ───────────────────────────────────────────────────────────

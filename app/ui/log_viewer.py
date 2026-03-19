@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QTextCharFormat, QColor, QFont
 
-from app.core.log_parser import LogParser, LogIssue
+from app.core.log_parser import LogParser, LogIssue, StartupAnalysis
 from app.core.instance import Instance
 from typing import Optional
 
@@ -31,7 +31,7 @@ class LogViewerDialog(QDialog):
         top_bar = QHBoxLayout()
 
         self.log_path_label = QLabel("No log loaded")
-        self.log_path_label.setStyleSheet("color: #6c7086;")
+        self.log_path_label.setObjectName("statLabel")
         top_bar.addWidget(self.log_path_label, 1)
 
         self.load_btn = QPushButton("📂 Open Log")
@@ -80,7 +80,7 @@ class LogViewerDialog(QDialog):
 
         # Stats bar
         self.stats_label = QLabel("")
-        self.stats_label.setStyleSheet("color: #a6adc8;")
+        self.stats_label.setObjectName("subheading")
         log_layout.addWidget(self.stats_label)
 
         tabs.addTab(log_tab, "📄 Log View")
@@ -115,6 +115,15 @@ class LogViewerDialog(QDialog):
         summary_layout.addWidget(export_btn)
 
         tabs.addTab(summary_tab, "📊 Summary")
+
+        startup_tab = QWidget()
+        startup_layout = QVBoxLayout(startup_tab)
+
+        self.startup_text = QTextEdit()
+        self.startup_text.setReadOnly(True)
+        startup_layout.addWidget(self.startup_text)
+
+        tabs.addTab(startup_tab, "⚡ Startup Analysis")
 
         layout.addWidget(tabs)
 
@@ -170,13 +179,17 @@ class LogViewerDialog(QDialog):
         self.log_view.clear()
         cursor = self.log_view.textCursor()
 
+        from app.core.app_settings import AppSettings
+        from app.ui.styles import get_colors
+        c = get_colors(AppSettings.instance().theme)
+
         error_fmt = QTextCharFormat()
-        error_fmt.setForeground(QColor("#f38ba8"))
+        error_fmt.setForeground(QColor(c['error']))
         error_fmt.setFontWeight(QFont.Weight.Bold)
         warn_fmt = QTextCharFormat()
-        warn_fmt.setForeground(QColor("#fab387"))
+        warn_fmt.setForeground(QColor(c['warning']))
         info_fmt = QTextCharFormat()
-        info_fmt.setForeground(QColor("#cdd6f4"))
+        info_fmt.setForeground(QColor(c['text']))
 
         for entry in entries:
             if entry.level == 'ERROR':
@@ -190,16 +203,6 @@ class LogViewerDialog(QDialog):
         self.log_view.setTextCursor(cursor)
         self.log_view.setUpdatesEnabled(True)
         self.log_view.moveCursor(cursor.MoveOperation.Start)
-
-        errors = self.log_parser.get_error_count()
-        warnings = self.log_parser.get_warning_count()
-        total = len(self.log_parser.entries)
-        self.stats_label.setText(
-            f"Total: {total} lines | "
-            f"🔴 {errors} errors | "
-            f"🟡 {warnings} warnings | "
-            f"Showing: {len(entries)} lines"
-        )
 
         errors = self.log_parser.get_error_count()
         warnings = self.log_parser.get_warning_count()
@@ -248,27 +251,187 @@ class LogViewerDialog(QDialog):
                 item = QListWidgetItem(f"{icon} {issue.title}{count_str}")
                 item.setData(Qt.ItemDataRole.UserRole, issue)
 
+                from app.core.app_settings import AppSettings
+                from app.ui.styles import get_colors
+                _c = get_colors(AppSettings.instance().theme)
                 color = {
-                    'error': QColor("#f38ba8"),
-                    'warning': QColor("#fab387"),
-                    'info': QColor("#89b4fa"),
-                }.get(issue.severity, QColor("#cdd6f4"))
+                    'error':   QColor(_c['error']),
+                    'warning': QColor(_c['warning']),
+                    'info':    QColor(_c['accent']),
+                }.get(issue.severity, QColor(_c['text']))
                 item.setForeground(color)
                 self.issues_list.addItem(item)
 
-        # Generate summary
+        # Generate summary and startup analysis
         self._generate_summary(issues)
+        self._generate_startup_analysis()
+
+
+    def _generate_startup_analysis(self):
+        """Parse and display startup timing and memory analysis."""
+        from app.core.app_settings import AppSettings
+        from app.ui.styles import get_colors
+        _c = get_colors(AppSettings.instance().theme)
+
+        analysis = self.log_parser.parse_startup_analysis()
+
+        if not analysis.phases and not analysis.memory_stats:
+            no_data_color = _c['text_dim']
+            self.startup_text.setHtml(
+                f"<p style='color:{no_data_color};'>"
+                f"No startup data found. Launch the game and reload the log.</p>")
+            return
+
+        html = f"<h2 style='color:{_c['accent']};'>Startup Analysis</h2>"
+
+        # Game info
+        if analysis.game_version:
+            html += (f"<p>RimWorld <b>{analysis.game_version}</b></p>")
+
+        if analysis.total_startup_s > 0:
+            html += (f"<p>Estimated total startup: "
+                     f"<b style='color:{_c['warning']};'>"
+                     f"{analysis.total_startup_s:.1f}s</b></p>")
+
+        # Startup phases
+        if analysis.phases:
+            html += f"<hr><h3 style='color:{_c['accent']};'>Startup Phases</h3>"
+            html += "<table width='100%' cellspacing='4'>"
+            html += (f"<tr>"
+                     f"<th align='left' style='color:{_c['text_dim']};'>Phase</th>"
+                     f"<th align='right' style='color:{_c['text_dim']};'>Duration</th>"
+                     f"<th align='left' style='color:{_c['text_dim']};'>Impact</th>"
+                     f"</tr>")
+
+            # Sort by duration descending
+            sorted_phases = sorted(
+                analysis.phases, key=lambda p: p.seconds, reverse=True)
+
+            max_sec = max(p.seconds for p in sorted_phases) if sorted_phases else 1
+
+            for phase in sorted_phases:
+                pct = phase.seconds / max_sec if max_sec > 0 else 0
+
+                if pct >= 0.7:
+                    color = _c['error']
+                    impact = 'High'
+                elif pct >= 0.3:
+                    color = _c['warning']
+                    impact = 'Medium'
+                else:
+                    color = _c['success']
+                    impact = 'Low'
+
+                bar_len = int(pct * 20)
+                bar = '█' * bar_len + '░' * (20 - bar_len)
+
+                html += (
+                    f"<tr>"
+                    f"<td style='color:{_c['text']};'>{phase.name}</td>"
+                    f"<td align='right' style='color:{color};'>"
+                    f"<b>{phase.display}</b></td>"
+                    f"<td style='color:{color}; font-family:monospace;'>"
+                    f" {bar} {impact}</td>"
+                    f"</tr>")
+
+            html += "</table>"
+
+            # Assembly time callout
+            if analysis.assembly_time_s > 3.0:
+                html += (
+                    f"<p style='color:{_c['warning']};'>"
+                    f"Assembly loading took {analysis.assembly_time_s:.2f}s. "
+                    f"More C# mods = longer load time.</p>")
+
+        # Memory stats
+        if analysis.memory_stats:
+            html += f"<hr><h3 style='color:{_c['accent']};'>Peak Memory Usage</h3>"
+            html += "<table width='100%' cellspacing='4'>"
+
+            total_mb = sum(s.peak_mb for s in analysis.memory_stats)
+
+            for stat in sorted(
+                    analysis.memory_stats, key=lambda s: s.peak_mb, reverse=True):
+                if stat.peak_mb >= 512:
+                    color = _c['error']
+                elif stat.peak_mb >= 256:
+                    color = _c['warning']
+                else:
+                    color = _c['text']
+
+                if stat.peak_mb >= 1024:
+                    display = f"{stat.peak_mb / 1024:.2f} GB"
+                else:
+                    display = f"{stat.peak_mb:.0f} MB"
+
+                html += (
+                    f"<tr>"
+                    f"<td style='color:{_c['text']};'>{stat.name}</td>"
+                    f"<td align='right' style='color:{color};'>"
+                    f"<b>{display}</b></td>"
+                    f"</tr>")
+
+            html += "</table>"
+
+            if total_mb >= 3072:
+                html += (
+                    f"<p style='color:{_c['error']};'>"
+                    f"Total peak memory exceeds 3 GB. "
+                    f"Consider reducing mod count if experiencing crashes.</p>")
+            elif total_mb >= 2048:
+                html += (
+                    f"<p style='color:{_c['warning']};'>"
+                    f"Total peak memory is high ({total_mb/1024:.1f} GB). "
+                    f"Monitor for out-of-memory issues.</p>")
+
+        # C# mod info
+        html += (
+            f"<hr><h3 style='color:{_c['accent']};'>Assembly Info</h3>"
+            f"<p>Assemblies loaded: <b>{analysis.csharp_mod_count}</b></p>"
+            f"<p style='color:{_c['text_dim']};'>"
+            f"Each C# mod adds to startup time. "
+            f"XML-only mods load much faster.</p>")
+
+        # Tips based on data
+        html += f"<hr><h3 style='color:{_c['accent']};'>Tips</h3><ul>"
+        if analysis.assembly_time_s > 5.0:
+            html += (f"<li style='color:{_c['warning']};'>"
+                     f"Assembly load time is high ({analysis.assembly_time_s:.1f}s). "
+                     f"Harmony and Prepatcher reduce this for subsequent launches.</li>")
+
+        # Check for known performance mods in log
+        log_text = self.log_parser.raw_text
+        if 'performanceoptimizer' in log_text.lower():
+            html += (f"<li style='color:{_c['success']};'>"
+                     f"Performance Optimizer detected — good for large modlists.</li>")
+        if 'vr.missilegirl' in log_text.lower() or 'rocketman' in log_text.lower():
+            html += (f"<li style='color:{_c['success']};'>"
+                     f"RocketMan/MissileGirl detected — helps with runtime performance.</li>")
+        if 'FasterGameLoading' in log_text or 'GAGARIN' in log_text:
+            html += (f"<li style='color:{_c['success']};'>"
+                     f"Faster Game Loading detected — XML caching active.</li>")
+
+        html += "</ul>"
+
+        self.startup_text.setHtml(html)
 
     def _on_issue_selected(self, item):
         issue = item.data(Qt.ItemDataRole.UserRole)
         if issue:
+            from app.core.app_settings import AppSettings
+            from app.ui.styles import get_colors
+            _c = get_colors(AppSettings.instance().theme)
+            accent  = _c['accent']
+            success = _c['success']
+            related = (f"<p><b>Related mod:</b> {issue.related_mod}</p>"
+                       if issue.related_mod else '')
             self.issue_detail.setHtml(
-                f"<h3 style='color: #89b4fa'>{issue.title}</h3>"
+                f"<h3 style='color:{accent}'>{issue.title}</h3>"
                 f"<p><b>Severity:</b> {issue.severity.upper()}</p>"
                 f"<p><b>Occurrences:</b> {issue.count}</p>"
                 f"<p><b>Description:</b> {issue.description}</p>"
-                f"<p style='color: #a6e3a1'><b>Suggestion:</b> {issue.suggestion}</p>"
-                f"{'<p><b>Related mod:</b> ' + issue.related_mod + '</p>' if issue.related_mod else ''}"
+                f"<p style='color:{success}'><b>Suggestion:</b> {issue.suggestion}</p>"
+                f"{related}"
             )
 
     def _generate_summary(self, issues: list[LogIssue]):
@@ -276,11 +439,14 @@ class LogViewerDialog(QDialog):
         warnings = self.log_parser.get_warning_count()
         total = len(self.log_parser.entries)
 
+        from app.core.app_settings import AppSettings
+        from app.ui.styles import get_colors
+        _c = get_colors(AppSettings.instance().theme)
         html = f"""
-        <h2 style='color: #89b4fa'>Log Analysis Summary</h2>
+        <h2 style='color: {_c['accent']}'>Log Analysis Summary</h2>
         <p>Total log lines: <b>{total}</b></p>
-        <p style='color: #f38ba8'>Errors: <b>{errors}</b></p>
-        <p style='color: #fab387'>Warnings: <b>{warnings}</b></p>
+        <p style='color: {_c['error']}'>Errors: <b>{errors}</b></p>
+        <p style='color: {_c['warning']}'>Warnings: <b>{warnings}</b></p>
         <hr>
         <h3>Detected Issues ({len(issues)})</h3>
         """
@@ -290,7 +456,7 @@ class LogViewerDialog(QDialog):
                 icon = {'error': '🔴', 'warning': '🟡', 'info': 'ℹ️'}.get(issue.severity, '')
                 html += f"<p>{icon} <b>{issue.title}</b> (×{issue.count}) — {issue.suggestion}</p>"
         else:
-            html += "<p style='color: #a6e3a1'>✅ No known issues detected!</p>"
+            html += f"<p style='color: {_c['success']}'>No known issues detected.</p>"
 
         html += """
         <hr>
