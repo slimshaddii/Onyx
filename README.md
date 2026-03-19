@@ -1,4 +1,3 @@
-```markdown
 # Onyx Launcher
 
 A mod manager and instance launcher for RimWorld. Provides true per-instance isolation for mods, saves, and configuration — allowing multiple modpack setups to coexist without conflict.
