@@ -18,7 +18,7 @@ class ModInfo:
     # forced_dependencies  → always required, regardless of version tags
     # dependencies         → base (no version tag) OR version-matched, never both
     forced_dependencies: list[str] = field(default_factory=list)
-    dependencies: list[str] = field(default_factory=list)
+    dep_alternatives: dict[str, list[str]] = field(default_factory=dict)
 
     load_after: list[str] = field(default_factory=list)
     load_before: list[str] = field(default_factory=list)
@@ -64,15 +64,28 @@ class ModInfo:
         major_version = (f"{parts[0]}.{parts[1]}"
                          if len(parts) >= 2 else game_version)
 
+        dep_alternatives: dict[str, set[str]] = {}
+
         def _ids_from_li_block(parent_elem) -> set[str]:
-            """Extract <packageId> text from <li> children."""
+            """Extract <packageId> text from <li> children.
+            Also captures <alternativePackageIds> per dependency."""
             result: set[str] = set()
             if parent_elem is None:
                 return result
             for li in parent_elem.findall('li'):
                 pid = get_text(li, 'packageId')
                 if pid:
-                    result.add(pid.lower().strip())
+                    pid_l = pid.lower().strip()
+                    result.add(pid_l)
+                    # Read alternativePackageIds if present
+                    alt_elem = li.find('alternativePackageIds')
+                    if alt_elem is not None:
+                        alts: set[str] = set()
+                        for alt_li in alt_elem.findall('li'):
+                            if alt_li.text:
+                                alts.add(alt_li.text.lower().strip())
+                        if alts:
+                            dep_alternatives[pid_l] = alts
             return result
 
         def _ids_from_version_block(parent_elem,
@@ -194,7 +207,8 @@ class ModInfo:
             path=mod_path,
             supported_versions=versions,
             forced_dependencies=sorted(forced_deps),
-            dependencies=sorted(resolved_deps),
+            dep_alternatives={k: sorted(v)
+                              for k, v in dep_alternatives.items()},
             load_after=sorted(load_after),
             load_before=sorted(load_before),
             incompatible_with=sorted(incompatible),

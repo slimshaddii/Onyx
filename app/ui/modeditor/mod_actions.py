@@ -189,8 +189,19 @@ class ModActions:
         ids = self.active.get_ids()
         if not ids:
             return
-        self.all_mods = self.rw.get_installed_mods(force_rescan=True,
-                                                    max_age_seconds=0)
+        from app.core.app_settings import AppSettings
+        from app.core.paths import mods_dir
+        from pathlib import Path
+        _s    = AppSettings.instance()
+        paths = []
+        if _s.data_root:
+            paths.append(str(mods_dir(Path(_s.data_root))))
+        if _s.steam_workshop_path:
+            paths.append(_s.steam_workshop_path)
+        self.all_mods = self.rw.get_installed_mods(
+            extra_mod_paths=paths,
+            force_rescan=True,
+            max_age_seconds=0)
         sorted_ids    = auto_sort_mods(ids, self.rw)
         self.active.clear()
         self._batch_load_active(sorted_ids)

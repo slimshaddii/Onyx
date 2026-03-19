@@ -162,26 +162,60 @@ class InstanceEditDialog(QDialog):
         lo = QVBoxLayout(w)
 
         self.saves_list = QListWidget()
-        for s in self.inst.get_save_files():
+        self._save_files = self.inst.get_save_files()
+
+        for s in self._save_files:
             try:
                 dt = datetime.fromisoformat(
                     s['modified']).strftime("%b %d %H:%M")
             except Exception:
                 dt = s['modified'][:16]
+            from app.utils.file_utils import human_size
             self.saves_list.addItem(
                 f"📄 {s['name']}  —  {human_size(s['size'])}  —  {dt}")
+
         if not self.saves_list.count():
             lo.addWidget(QLabel("No saves yet."))
         lo.addWidget(self.saves_list)
 
         sv_btns = QHBoxLayout()
+
         sv_open_btn = QPushButton("Open Saves Folder")
         sv_open_btn.clicked.connect(
             lambda: self._open_path(self.inst.saves_dir))
         sv_btns.addWidget(sv_open_btn)
+
+        del_btn = QPushButton("🗑 Delete Save")
+        del_btn.setObjectName("dangerButton")
+        del_btn.clicked.connect(self._delete_selected_save)
+        sv_btns.addWidget(del_btn)
+
         sv_btns.addStretch()
         lo.addLayout(sv_btns)
         return w
+
+    def _delete_selected_save(self):
+        row = self.saves_list.currentRow()
+        if row < 0 or row >= len(self._save_files):
+            QMessageBox.information(
+                self, "Delete Save", "Select a save to delete.")
+            return
+
+        s = self._save_files[row]
+        if QMessageBox.question(
+            self, "Delete Save",
+            f"Delete '{s['name']}'?\n\nThis cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            Path(s['path']).unlink()
+            self.saves_list.takeItem(row)
+            self._save_files.pop(row)
+        except Exception as e:
+            QMessageBox.critical(self, "Delete Failed", str(e))
 
     # ── Notes tab ─────────────────────────────────────────────────────────
 

@@ -433,12 +433,13 @@ class InstanceGridPanel(QWidget):
     # ── Rebuild ───────────────────────────────────────────────────────────────
 
     def _rebuild(self):
+        self.gc.setVisible(False)
+
         while self._content_lo.count() > 1:
             item = self._content_lo.takeAt(0)
             w = item.widget()
             if w:
                 w.setParent(None)
-                w.hide()
                 w.deleteLater()
         self._cards.clear()
 
@@ -464,6 +465,8 @@ class InstanceGridPanel(QWidget):
             self._rebuild_flat(filt, cols)
 
         self.cnt.setText(f"{len(filt)}/{len(self.instances)}")
+
+        self.gc.setVisible(True)
 
     def _rebuild_flat(self, instances: list[Instance], cols: int):
         grid = GroupCardGrid('')
@@ -770,5 +773,11 @@ class InstanceGridPanel(QWidget):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        if self._cards:
-            self._resize_timer.start(150)
+        # Only rebuild if column count actually changes
+        vw      = self.scroll.viewport().width()
+        vw      = vw if vw > 50 else 350
+        new_cols = max(1, (vw - 6) // 158)
+        if new_cols != getattr(self, '_last_cols', -1):
+            self._last_cols = new_cols
+            if self._cards:
+                self._resize_timer.start(150)

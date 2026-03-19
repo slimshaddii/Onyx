@@ -42,25 +42,30 @@ def get_badges(mid: str, all_mods: dict[str, ModInfo], active_ids: set[str],
         badges.append(('❌', COLOR_ERROR, 'error', 'Not found on disk'))
         return badges
 
-    for dep in info.dependencies:
-        if dep not in active_ids:
-            dep_key = f"{mid}:{dep}"
-            if dep_key in ignored_deps:
-                continue
-            on_disk  = dep in all_mods
-            dep_name = all_mods[dep].name if on_disk else dep
-            if on_disk:
-                badges.append((
-                    '⚠', COLOR_DEPENDENCY, 'dep',
-                    f"Needs '{dep_name}' (declared in About.xml, not active)",
-                ))
-            else:
-                badges.append((
-                    '❌', COLOR_ERROR, 'error',
-                    f"Needs '{dep_name}' (declared in About.xml, NOT INSTALLED)",
-                ))
+    dep_alts = getattr(info, 'dep_alternatives', {})
+    for dep in getattr(info, 'dependencies', []):
+        if dep in active_ids:
+            continue
+        # Check alternatives
+        if any(alt in active_ids for alt in dep_alts.get(dep, [])):
+            continue
+        dep_key = f"{mid}:{dep}"
+        if dep_key in ignored_deps:
+            continue
+        on_disk  = dep in all_mods
+        dep_name = all_mods[dep].name if on_disk else dep
+        if on_disk:
+            badges.append((
+                '⚠', COLOR_DEPENDENCY, 'dep',
+                f"Needs '{dep_name}' (declared in About.xml, not active)",
+            ))
+        else:
+            badges.append((
+                '❌', COLOR_ERROR, 'error',
+                f"Needs '{dep_name}' (declared in About.xml, NOT INSTALLED)",
+            ))
 
-    for incompat in info.incompatible_with:
+    for incompat in getattr(info, 'incompatible_with', []):
         incompat_l = incompat.lower()
         if incompat_l in active_ids:
             incompat_name = (all_mods[incompat_l].name
@@ -115,7 +120,7 @@ def check_load_order(mid: str, info: ModInfo, order: list[str],
     my_idx     = pos[mid]
     active_set = set(pos.keys())
 
-    for dep in info.load_after:
+    for dep in getattr(info, 'load_after', []):
         dep_l = dep.lower()
         if dep_l in active_set and pos[dep_l] > my_idx:
             dep_name = all_mods[dep_l].name if dep_l in all_mods else dep_l
@@ -124,7 +129,7 @@ def check_load_order(mid: str, info: ModInfo, order: list[str],
                 f"Should load after '{dep_name}'",
             ))
 
-    for dep in info.load_before:
+    for dep in getattr(info, 'load_before', []):
         dep_l = dep.lower()
         if dep_l in active_set and pos[dep_l] < my_idx:
             dep_name = all_mods[dep_l].name if dep_l in all_mods else dep_l

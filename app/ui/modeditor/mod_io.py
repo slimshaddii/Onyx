@@ -50,25 +50,36 @@ class ModIO:
         if not any(m.lower() == 'ludeon.rimworld' for m in active_ids):
             active_ids.insert(0, 'ludeon.rimworld')
 
-        issues   = analyze_modlist(
+        from app.ui.modeditor.issue_checker import get_badges as _get_badges
+        from PyQt6.QtWidgets import QMessageBox
+
+        issues = analyze_modlist(
             active_ids, self.rw,
             self.inst.rimworld_version or '',
-            ignored_deps=self._ignored_deps_set())
+            ignored_deps=self._ignored_deps_set(),
+            extra_mod_paths=self._extra_mod_paths(),
+            known_workshop_ids=self._known_workshop_ids())
+
         critical = [i for i in issues if i.severity == 'error']
 
-        if critical:
-            msg     = f"Cannot save: {len(critical)} critical issue(s).\n\n"
-            missing = [i for i in critical if i.issue_type == 'missing_dep']
-            absent  = [i for i in critical if i.issue_type == 'not_found']
-            if missing:
-                msg += f"Missing deps ({len(missing)}):\n"
-                for iss in missing[:5]:
-                    msg += f"  - {iss.mod_name} needs '{iss.dep_name}'\n"
-            if absent:
-                msg += f"\nNot on disk ({len(absent)}):\n"
-                for iss in absent[:5]:
-                    msg += f"  - {iss.mod_name}\n"
-            msg += "\nUse 'Fix Issues' to resolve."
+        active_set = set(active_ids)
+        _pos       = {m: i for i, m in enumerate(active_ids)}
+        ignored    = self._ignored_deps_set()
+        incompat_errors: list[str] = []
+        for mid in active_ids:
+            for badge in _get_badges(mid, self.all_mods, active_set,
+                                     self.inst.rimworld_version or '',
+                                     active_ids, _pos, ignored):
+                if badge[2] == 'error' and 'ncompatible' in badge[3]:
+                    name = self.all_mods[mid].name if mid in self.all_mods else mid
+                    incompat_errors.append(f"  - {name}: {badge[3]}")
+
+        if incompat_errors:
+            msg = (f"Cannot save: {len(incompat_errors)} incompatible mod(s).\n\n"
+                   + "\n".join(incompat_errors[:5]))
+            if len(incompat_errors) > 5:
+                msg += f"\n  ... and {len(incompat_errors) - 5} more"
+            msg += "\n\nRemove incompatible mods or add them to the ignore list."
             QMessageBox.critical(self, "Cannot Save", msg)
             return
 

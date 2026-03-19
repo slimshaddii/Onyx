@@ -194,10 +194,36 @@ class Launcher:
             self._current_process.terminate()
 
     def get_playtime_minutes(self) -> int:
+        """Calculate playtime from launch time if available."""
         if self._launch_time:
             return int(
                 (datetime.now() - self._launch_time).total_seconds() / 60)
         return 0
+
+    @staticmethod
+    def get_session_minutes_from_log(instance_path: Path) -> int:
+        """
+        Calculate playtime from Player.log timestamps.
+        Used when launcher was closed during gameplay.
+        Reads first and last line timestamps from the log file.
+        """
+        log_path = instance_path / 'Player.log'
+        if not log_path.exists():
+            return 0
+        try:
+            import os
+            mtime = datetime.fromtimestamp(os.path.getmtime(log_path))
+            with open(log_path, 'r', encoding='utf-8',
+                      errors='replace') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        break
+            ctime = datetime.fromtimestamp(os.path.getctime(log_path))
+            mins  = int((mtime - ctime).total_seconds() / 60)
+            return max(0, mins)
+        except Exception:
+            return 0
 
     @staticmethod
     def get_common_launch_args() -> list[dict]:

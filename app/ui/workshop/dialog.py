@@ -83,8 +83,10 @@ class WorkshopBrowserDialog(QDialog):
         self.sidebar.delete_mod.connect(self._handle_delete)
         self._refresh_sidebar()
         body.addWidget(self.sidebar)
-        msg = QLabel(f"WebEngine unavailable — {WE_ERROR or 'pip install PyQt6-WebEngine'}\n"
-                     "Enter a mod ID in the address bar.")
+        msg = QLabel(
+            f"WebEngine unavailable — "
+            f"{WE_ERROR or 'pip install PyQt6-WebEngine'}\n"
+            "Enter a mod ID in the address bar.")
         msg.setStyleSheet("padding:24px;color:#aaa;")
         msg.setWordWrap(True)
         msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -171,6 +173,16 @@ class WorkshopBrowserDialog(QDialog):
         go.clicked.connect(self._navigate)
         lo.addWidget(go)
 
+        
+        dl_coll = QPushButton("Download Collection")
+        dl_coll.setFixedHeight(26)
+        dl_coll.setStyleSheet("font-size:10px;padding:2px 8px;")
+        dl_coll.setToolTip(
+            "Download all mods from a Steam Workshop collection.\n"
+            "Paste the collection URL or ID in the address bar first.")
+        dl_coll.clicked.connect(self._download_collection)
+        lo.addWidget(dl_coll)
+
         lo.addWidget(QLabel("│"))
 
         self.method_cb = QComboBox()
@@ -213,15 +225,23 @@ class WorkshopBrowserDialog(QDialog):
             self._go_home()
             return
         if not self._browser:
+            if t.isdigit():
+                self._try_download_or_collection(t)
             return
         if t.startswith('http'):
             self._browser.load(QUrl(t))
         elif t.isdigit():
-            self._browser.load(QUrl(f"https://steamcommunity.com/sharedfiles/filedetails/?id={t}"))
+            self._browser.load(QUrl(
+                f"https://steamcommunity.com/sharedfiles/filedetails/?id={t}"))
         elif re.search(r'id=(\d+)', t):
-            self._browser.load(QUrl(f"https://steamcommunity.com/sharedfiles/filedetails/?id={re.search(r'id=(\d+)',t).group(1)}"))
+            wid = re.search(r'id=(\d+)', t).group(1)
+            self._browser.load(QUrl(
+                f"https://steamcommunity.com/sharedfiles/filedetails/?id={wid}"))
         else:
-            self._browser.load(QUrl(f"https://steamcommunity.com/workshop/browse/?appid=294100&searchtext={t}&browsesort=trend&section=readytouseitems"))
+            self._browser.load(QUrl(
+                f"https://steamcommunity.com/workshop/browse/"
+                f"?appid=294100&searchtext={t}"
+                f"&browsesort=trend&section=readytouseitems"))
 
     # ── Page events ──────────────────────────────────────────────
 
@@ -260,6 +280,150 @@ class WorkshopBrowserDialog(QDialog):
             return
 
         self._dlq.enqueue(mod_id, f"Item {mod_id}")
+
+    def _download_collection(self):
+        """
+        Fetch all mod IDs from a Steam Workshop collection and
+        queue them for download.
+        """
+        t = self.addr.text().strip()
+
+        # Extract ID from URL or use raw ID
+        m = re.search(r'id=(\d+)', t)
+        if m:
+            coll_id = m.group(1)
+        elif t.isdigit():
+            coll_id = t
+        else:
+            from PyQt6.QtWidgets import QInputDialog
+            coll_id, ok = QInputDialog.getText(
+                self, "Collection ID",
+                "Enter Steam Workshop collection ID or URL:")
+            if not ok or not coll_id.strip():
+                return
+            m2 = re.search(r'id=(\d+)', coll_id)
+            coll_id = m2.group(1) if m2 else coll_id.strip()
+
+        if not coll_id.isdigit():
+            QMessageBox.warning(
+                self, "Invalid ID",
+                "Could not find a valid collection ID.")
+            return
+
+        self.status_lbl.setText(f"Fetching collection {coll_id}...")
+        QApplication.processEvents()
+
+        mod_ids, error = self._fetch_collection(coll_id)
+        if error:
+            QMessageBox.warning(
+                self, "Collection Error", error)
+            self.status_lbl.setText("Ready")
+            return
+
+        if not mod_ids:
+            QMessageBox.information(
+                self, "Empty Collection",
+                "No mods found in this collection.")
+            self.status_lbl.setText("Ready")
+            return
+
+        # Filter already installed
+        to_download = [mid for mid in mod_ids
+                       if mid not in self.installed_ids]
+        already     = len(mod_ids) - len(to_download)
+
+        if not to_download:
+            QMessageBox.information(
+                self, "Collection",
+                f"All {len(mod_ids)} mods already installed.")
+            self.status_lbl.setText("Ready")
+            return
+
+        msg = (f"Collection contains {len(mod_ids)} mod(s).\n"
+               f"Already installed: {already}\n"
+               f"To download: {len(to_download)}\n\n"
+               f"Download {len(to_download)} mod(s) now?")
+
+        if QMessageBox.question(
+                self, "Download Collection", msg,
+                QMessageBox.StandardButton.Yes |
+                QMessageBox.StandardButton.No
+        ) != QMessageBox.StandardButton.Yes:
+            self.status_lbl.setText("Ready")
+            return
+
+        if not self._dlq.is_configured:
+            QMessageBox.warning(
+                self, "SteamCMD",
+                "SteamCMD not configured. Set path in Settings.")
+            return
+
+        for mod_id in to_download:
+            self._dlq.enqueue(mod_id, f"Mod {mod_id}")
+
+        self.status_lbl.setText(
+            f"Queued {len(to_download)} mod(s) from collection")
+
+    @staticmethod
+    def _fetch_collection(collection_id: str) -> tuple[list[str], str]:
+        """
+        Fetch mod IDs from a Steam Workshop collection.
+        Returns (mod_id_list, error_string).
+        No API key required for this endpoint.
+        """
+        import requests as _requests
+
+        url = ("https://api.steampowered.com/"
+               "ISteamRemoteStorage/GetCollectionDetails/v1/")
+        try:
+            resp = _requests.post(url, data={
+                'collectioncount': '1',
+                'publishedfileids[0]': collection_id,
+            }, timeout=15)
+            resp.raise_for_status()
+            raw = resp.json()
+        except Exception as e:
+            return [], f"Network error: {e}"
+
+        try:
+            result = raw['response']['collectiondetails'][0]
+        except (KeyError, IndexError):
+            return [], "Unexpected API response format."
+
+        if result.get('result') != 1:
+            return [], (f"Steam API error: result code "
+                        f"{result.get('result')}. "
+                        f"Is this a valid collection ID?")
+
+        children = result.get('children', [])
+        if not children:
+            return [], ""
+
+        mod_ids: list[str] = []
+        nested:  list[str] = []
+
+        for child in children:
+            fid       = str(child.get('publishedfileid', ''))
+            file_type = child.get('file_type', 0)
+            if not fid:
+                continue
+            if file_type == 2:
+                nested.append(fid)
+            else:
+                mod_ids.append(fid)
+
+        for nested_id in nested:
+            sub_ids, _ = WorkshopBrowserDialog._fetch_collection(nested_id)
+            mod_ids.extend(sub_ids)
+
+        seen: set[str] = set()
+        unique: list[str] = []
+        for mid in mod_ids:
+            if mid not in seen:
+                seen.add(mid)
+                unique.append(mid)
+
+        return unique, ""
 
     def _on_started(self, wid, title):
         self.sidebar.add_download(wid, title)

@@ -14,7 +14,18 @@ import subprocess
 from pathlib import Path
 
 
-APP_NAME    = "OnyxLauncher-Beta"
+import subprocess
+def _get_version() -> str:
+    try:
+        tag = subprocess.check_output(
+            ['git', 'describe', '--tags', '--abbrev=0'],
+            stderr=subprocess.DEVNULL).decode().strip()
+        return f"OnyxLauncher-{tag}"
+    except Exception:
+        return "OnyxLauncher-Beta"
+
+APP_NAME = _get_version()
+
 DIST_DIR    = Path("dist")
 BUILD_DIR   = Path("build")
 SPEC_FILE   = "main.spec"

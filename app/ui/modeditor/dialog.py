@@ -37,7 +37,18 @@ class ModEditorDialog(ItemBuilder, ModActions, ModFixes, ModIO,
         QDialog.__init__(self, parent)
         self.inst     = instance
         self.rw       = rw
-        self.all_mods = rw.get_installed_mods(force_rescan=True, max_age_seconds=30.0)
+        from app.core.app_settings import AppSettings
+        from app.core.paths import mods_dir
+        _s    = AppSettings.instance()
+        paths = []
+        if _s.data_root:
+            paths.append(str(mods_dir(Path(_s.data_root))))
+        if _s.steam_workshop_path:
+            paths.append(_s.steam_workshop_path)
+        self.all_mods = rw.get_installed_mods(
+            extra_mod_paths=paths,
+            force_rescan=True,
+            max_age_seconds=30.0)
         self.names    = {pid: info.name
                          for pid, info in self.all_mods.items()}
 

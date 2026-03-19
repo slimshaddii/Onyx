@@ -247,6 +247,9 @@ def import_onyx(onyx_path: Path,
         )
 
         inst.inactive_mods = inactive_ids
+        for mod in preview.mods:
+            if mod.id and mod.workshop_id:
+                inst.mod_workshop_ids[mod.id] = mod.workshop_id
         inst.save()
 
         # Extract optional config files

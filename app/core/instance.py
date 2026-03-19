@@ -23,9 +23,8 @@ class Instance:
     total_playtime_minutes: int = 0
     mods_configured: bool = False
     ignored_deps: list[str] = field(default_factory=list)
-    # Format: ["mod_id:dep_id", ...]
-    # e.g. "mlie.phaseweaponry:brrainz.harmony" means
-    # "for this instance, ignore Harmony dep warning on Phase Weaponry"
+
+    mod_workshop_ids: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path) -> Optional['Instance']:
@@ -50,6 +49,7 @@ class Instance:
                 total_playtime_minutes=d.get('total_playtime_minutes', 0),
                 mods_configured=d.get('mods_configured', False),
                 ignored_deps=d.get('ignored_deps', []),
+                mod_workshop_ids=d.get('mod_workshop_ids', {}),
             )
         except (json.JSONDecodeError, KeyError, OSError):
             return None
@@ -71,6 +71,7 @@ class Instance:
             'total_playtime_minutes': self.total_playtime_minutes,
             'mods_configured': self.mods_configured,
             'ignored_deps': self.ignored_deps,
+            'mod_workshop_ids': self.mod_workshop_ids,
         }
         tmp = self.path / 'instance.json.tmp'
         try:

@@ -20,28 +20,11 @@ class ModIssue:
     fixable: bool = False
 
 
-KNOWN_WORKSHOP_IDS = {
-    'brrainz.harmony': '2009463077',
-    'unlimitedhugs.hugslib': '1874644848',
-    'ludeon.rimworld': '',
-    'ludeon.rimworld.royalty': '',
-    'ludeon.rimworld.ideology': '',
-    'ludeon.rimworld.biotech': '',
-    'ludeon.rimworld.anomaly': '',
-    'zetrith.prepatcher': '2934245647',
-    'oskarpotocki.vanillafactionsexpanded.core': '1561769193',
-    'vanillaexpanded.vfe.core': '1561769193',
-    'erdelf.humanoidalienraces': '818773962',
-    'fluffy.modmanager': '1507748539',
-    'smashphil.neceros.srts.expanded': '1845423808',
-    'ceteam.combatextended': '2559644849',
-    'dubwise.dubsbadhygiene': '836308268',
-}
-
-
 def analyze_modlist(mod_ids: list[str], rw: RimWorldDetector,
                     game_version: str = '',
                     ignored_deps: set[str] | None = None,
+                    extra_mod_paths: list[str] | None = None,
+                    known_workshop_ids: dict[str, str] | None = None,
                     ) -> list[ModIssue]:
     """
     Analyze a mod list for issues.
@@ -52,9 +35,11 @@ def analyze_modlist(mod_ids: list[str], rw: RimWorldDetector,
         Matching dependency pairs are skipped — same format as
         Instance.ignored_deps.
     """
-    installed    = rw.get_installed_mods()
-    active_set   = set(mod_ids)
-    ignored_deps = ignored_deps or set()
+    installed          = rw.get_installed_mods(
+        extra_mod_paths=extra_mod_paths or [])
+    active_set         = set(mod_ids)
+    ignored_deps       = ignored_deps or set()
+    known_ws           = known_workshop_ids or {}
     issues: list[ModIssue] = []
 
     for mid in mod_ids:
@@ -62,20 +47,27 @@ def analyze_modlist(mod_ids: list[str], rw: RimWorldDetector,
 
         # Not found on disk
         if not info:
+            ws_id = known_ws.get(mid, '')
             issues.append(ModIssue(
                 mod_id=mid, mod_name=mid,
                 issue_type='not_found', severity='error',
                 message='Not found on disk',
-                workshop_id=KNOWN_WORKSHOP_IDS.get(mid, ''),
-                fixable=mid in KNOWN_WORKSHOP_IDS))
+                workshop_id=ws_id,
+                fixable=bool(ws_id)))
             continue
 
         # Missing dependencies
-        for dep in info.dependencies:
-            if dep not in active_set:
-                dep_key = f"{mid}:{dep}"
-                if dep_key in ignored_deps:
-                    continue               # user suppressed this warning
+        dep_alts = getattr(info, 'dep_alternatives', {})
+        for dep in getattr(info, 'dependencies', []):
+            if dep in active_set:
+                continue
+            # Check if any alternative package satisfies this dependency
+            alternatives = dep_alts.get(dep, [])
+            if any(alt in active_set for alt in alternatives):
+                continue  # satisfied by an alternative
+            dep_key = f"{mid}:{dep}"
+            if dep_key in ignored_deps:
+                continue  # user suppressed this warning
 
                 dep_info = installed.get(dep)
                 dep_name = dep_info.name if dep_info else dep
@@ -88,7 +80,7 @@ def analyze_modlist(mod_ids: list[str], rw: RimWorldDetector,
                         message=f"Requires '{dep_name}' (available, not active)",
                         dep_id=dep, dep_name=dep_name, fixable=True))
                 else:
-                    ws_id = KNOWN_WORKSHOP_IDS.get(dep, '')
+                    ws_id = known_ws.get(dep, '')
                     if not ws_id and dep_info:
                         ws_id = dep_info.workshop_id
                     issues.append(ModIssue(
@@ -120,13 +112,19 @@ def analyze_modlist(mod_ids: list[str], rw: RimWorldDetector,
 def get_downloadable_deps(issues: list[ModIssue]) -> list[tuple[str, str]]:
     seen, result = set(), []
     for issue in issues:
+        # Download missing deps that aren't installed
         if (issue.issue_type == 'missing_dep' and
                 issue.workshop_id and issue.severity == 'error'):
             if issue.dep_id not in seen:
                 seen.add(issue.dep_id)
                 result.append((issue.workshop_id, issue.dep_name))
+        # Also download mods that aren't found on disk at all
+        elif (issue.issue_type == 'not_found' and
+              issue.workshop_id):
+            if issue.mod_id not in seen:
+                seen.add(issue.mod_id)
+                result.append((issue.workshop_id, issue.mod_name))
     return result
-
 
 def get_activatable_deps(issues: list[ModIssue]) -> list[str]:
     seen, result = set(), []

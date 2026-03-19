@@ -180,8 +180,10 @@ class ModContext:
                 QMessageBox.critical(self, "Delete Failed", str(e))
                 return
 
-        self.all_mods = self.rw.get_installed_mods(force_rescan=True,
-                                                    max_age_seconds=0)
+            self.all_mods = self.rw.get_installed_mods(
+                extra_mod_paths=self._extra_mod_paths(),
+                force_rescan=True,
+                max_age_seconds=0)
         self.names    = {pid: i.name for pid, i in self.all_mods.items()}
 
         self.avail.apply_item_widgets()
@@ -211,36 +213,27 @@ class ModContext:
             QMessageBox.warning(self, "Error", "Data root not configured.")
             return
 
-        from app.ui.modeditor.download_dialog import DownloadProgressDialog
+        from app.core.steamcmd import DownloadQueue
+        from app.ui.modeditor.download_manager import DownloadManagerWindow
         queue = DownloadQueue(
             steamcmd_path=steamcmd_path,
             destination=str(Path(data_root) / 'mods'),
             max_concurrent=1,
-            username=_s.steamcmd_username)          # ← fixed
+            username=_s.steamcmd_username)
+        mgr = DownloadManagerWindow(queue, self)
+        mgr.queue_and_show([(info.workshop_id, info.name)])
+        queue.queue_empty.connect(
+            lambda: self._on_redownload_done_mgr(info.name, queue))
 
-        dlg = DownloadProgressDialog(
-            self, queue, [(info.workshop_id, info.name)])
-        dlg.setWindowTitle(f"Redownloading — {info.name}")
-        dlg.downloads_complete.connect(
-            lambda results: self._on_redownload_done(results, info.name))
-        dlg.exec()
-
-    def _on_redownload_done(self, results: list, mod_name: str):
-        ok = sum(1 for _, s, _ in results if s)
-        if ok:
-            self.all_mods = self.rw.get_installed_mods(force_rescan=True,
-                                                        max_age_seconds=0)
-            self.names    = {pid: i.name for pid, i in self.all_mods.items()}
-            self._refresh_badges()
-            self.active.apply_item_widgets()
-            QMessageBox.information(
-                self, "Redownload Complete",
-                f"'{mod_name}' was redownloaded successfully.")
-        else:
-            msg = results[0][2] if results else "Unknown error"
-            QMessageBox.warning(
-                self, "Redownload Failed",
-                f"Failed to redownload '{mod_name}':\n{msg}")
+    def _on_redownload_done_mgr(self, mod_name: str, queue):
+        """Called when redownload completes via download manager."""
+        self.all_mods = self.rw.get_installed_mods(
+            extra_mod_paths=self._extra_mod_paths(),
+            force_rescan=True,
+            max_age_seconds=0)
+        self.names = {pid: i.name for pid, i in self.all_mods.items()}
+        self._refresh_badges()
+        self.active.apply_item_widgets()
 
     def _ignore_dep(self, dep_key: str):
         if dep_key not in self.inst.ignored_deps:

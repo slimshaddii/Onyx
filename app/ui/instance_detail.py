@@ -77,13 +77,49 @@ class InstanceDetailPanel(QWidget):
 
     # ── Public API ────────────────────────────────────────────────────────
 
-    def set_instance(self, inst: Instance, rw: RimWorldDetector | None = None):
+    def set_instance(self, inst: Instance,
+                     rw: RimWorldDetector | None = None):
         self.current_instance = inst
         self.header.set_instance(inst.name, str(inst.path))
         self.actions.set_enabled(True)
         self.info.set_instance(inst, rw)
         self.saves.set_instance(inst, rw)
         self.notes.set_instance(inst)
+        self._check_untracked_playtime(inst)
+
+    def _check_untracked_playtime(self, inst: Instance):
+        """
+        If Player.log exists and was modified after last_played,
+        a session occurred while the launcher was closed.
+        Estimate and add the playtime from log timestamps.
+        """
+        import os
+        from app.core.launcher import Launcher
+        log_path = inst.path / 'Player.log'
+        if not log_path.exists():
+            return
+        try:
+            log_mtime = os.path.getmtime(log_path)
+            from datetime import datetime as _dt
+            log_dt = _dt.fromtimestamp(log_mtime)
+
+            # Parse last_played
+            if inst.last_played:
+                last = _dt.fromisoformat(inst.last_played)
+            else:
+                return
+
+            # If log was modified significantly after last_played,
+            # a session happened outside the launcher
+            diff_minutes = (log_dt - last).total_seconds() / 60
+            if diff_minutes > 2:
+                mins = Launcher.get_session_minutes_from_log(inst.path)
+                if mins > 0:
+                    inst.total_playtime_minutes += mins
+                    inst.last_played = log_dt.isoformat()
+                    inst.save()
+        except Exception:
+            pass
 
     def clear(self):
         self.current_instance = None

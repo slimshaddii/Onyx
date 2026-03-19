@@ -69,6 +69,8 @@ class MainWindow(QMainWindow):
             str(mods_dir(Path(dr))),
             max_concurrent=3,
             username=self.settings.get('steamcmd_username', ''))
+        from app.ui.modeditor.download_manager import DownloadManagerWindow
+        self._download_manager = DownloadManagerWindow(self.dl_queue, self)
         self.log_parser = LogParser()
         self._child_windows: list = []
 
@@ -117,6 +119,8 @@ class MainWindow(QMainWindow):
         return paths
 
     def _init_rw(self):
+        self.rw._mods_cache.clear()
+        self.rw._cache_time = 0.0
         exe = self.settings.get('rimworld_exe', '')
         if exe and Path(exe).exists():
             self.rw.set_game_path(str(Path(exe).parent))
@@ -179,6 +183,8 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         tb.addAction(QAction("🏪 Workshop",      self, triggered=self._on_workshop))
         tb.addAction(QAction("📋 Logs",          self, triggered=self._on_logs))
+        tb.addAction(QAction("Downloads", self,
+                             triggered=self._on_downloads))
         tb.addSeparator()
         tb.addAction(QAction("⟳ Refresh",        self, triggered=self.refresh))
         spacer = QWidget()
@@ -424,8 +430,8 @@ class MainWindow(QMainWindow):
     def _on_child_closed(self, dlg):
         if dlg in self._child_windows:
             self._child_windows.remove(dlg)
-        self._rescan_mods()
-        self.refresh()
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, lambda: (self._rescan_mods(), self.refresh()))
 
     # ── Logs ──────────────────────────────────────────────────────────────────
 
@@ -433,6 +439,13 @@ class MainWindow(QMainWindow):
         from app.ui.log_viewer import LogViewerDialog
         inst = self.detail.current_instance
         LogViewerDialog(None, self.log_parser, inst).exec()
+
+    # ── Downloads ──────────────────────────────────────────────────────────────
+
+    def _on_downloads(self):
+        self._download_manager.show()
+        self._download_manager.raise_()
+        self._download_manager.activateWindow()
 
     # ── Settings ──────────────────────────────────────────────────────────────
 
@@ -524,8 +537,9 @@ class MainWindow(QMainWindow):
     def _tick(self):
         if self.launcher.is_running():
             self.gl.setText("🎮 Running")
-        elif self.gl.text() == "🎮 Running":
-            # Game just stopped — record playtime
+            self._was_running = True
+        elif getattr(self, '_was_running', False):
+            self._was_running = False
             self.gl.setText("")
             inst = self.detail.current_instance
             if inst and self.launcher._launch_time:

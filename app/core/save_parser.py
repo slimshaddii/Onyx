@@ -125,41 +125,66 @@ def diff_save_mods(header: SaveHeader,
 
 def _read_meta_bytes(path: Path) -> Optional[bytes]:
     """
-    Decompress only enough of the .rws file to capture the <meta>…</meta>
-    block. Reads in 64 KB chunks and stops early.
+    Read the <meta>...</meta> block from a .rws save file.
+    RimWorld 1.5 and earlier: gzip compressed XML
+    RimWorld 1.6+: plain UTF-8 XML (with optional BOM)
     """
-    CHUNK      = 65536          # 64 KB chunks
-    META_END   = b'</meta>'
-    MAX_BYTES  = 4 * 1024 * 1024   # safety cap: never decompress > 4 MB
-
-    buf        = bytearray()
+    META_END  = b'</meta>'
+    MAX_BYTES = 4 * 1024 * 1024  # 4 MB safety cap
 
     try:
-        with gzip.open(str(path), 'rb') as gz:
-            while len(buf) < MAX_BYTES:
-                chunk = gz.read(CHUNK)
-                if not chunk:
-                    break
-                buf.extend(chunk)
-                if META_END in buf:
-                    break
-        if not buf:
-            return None
+        raw_header = path.read_bytes()[:3]
+    except OSError:
+        return None
+
+    # Detect gzip vs plain XML
+    is_gzip = raw_header[:2] == b'\x1f\x8b'
+
+    try:
+        if is_gzip:
+            # Legacy gzip path (1.5 and earlier)
+            CHUNK = 65536
+            buf   = bytearray()
+            with gzip.open(str(path), 'rb') as gz:
+                while len(buf) < MAX_BYTES:
+                    chunk = gz.read(CHUNK)
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
+                    if META_END in buf:
+                        break
+        else:
+            # Plain XML path (1.6+) — read only enough to get <meta>
+            buf = bytearray()
+            with open(str(path), 'rb') as f:
+                while len(buf) < MAX_BYTES:
+                    chunk = f.read(65536)
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
+                    if META_END in buf:
+                        break
+
     except (gzip.BadGzipFile, OSError, EOFError):
         return None
 
-    # Slice out just the meta block
-    end_idx = buf.find(META_END)
+    if not buf:
+        return None
+
+    # Strip UTF-8 BOM if present
+    data = bytes(buf)
+    if data.startswith(b'\xef\xbb\xbf'):
+        data = data[3:]
+
+    end_idx   = data.find(META_END)
     if end_idx == -1:
         return None
 
-    # Find opening <meta> tag
-    start_idx = buf.find(b'<meta>')
+    start_idx = data.find(b'<meta>')
     if start_idx == -1:
         return None
 
-    meta_bytes = bytes(buf[start_idx : end_idx + len(META_END)])
-    return meta_bytes
+    return data[start_idx : end_idx + len(META_END)]
 
 
 def _text(element: ET.Element, tag: str, default: str = '') -> str:

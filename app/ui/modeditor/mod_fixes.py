@@ -26,7 +26,10 @@ class ModFixes:
         ids    = self.active.get_ids()
         issues = analyze_modlist(ids, self.rw,
                                  self.inst.rimworld_version or '',
-                                 ignored_deps=self._ignored_deps_set())
+                                 ignored_deps=self._ignored_deps_set(),
+                                 extra_mod_paths=self._extra_mod_paths(),
+                                 known_workshop_ids=self._known_workshop_ids())
+
         if not issues:
             QMessageBox.information(self, "Fix Issues", "No issues found.")
             return
@@ -35,8 +38,9 @@ class ModFixes:
         downloadable = get_downloadable_deps(issues)
         activated    = 0
 
+        current_active = set(self.active.get_ids())
         for dep in activatable:
-            if dep in self.all_mods and dep not in set(self.active.get_ids()):
+            if dep in self.all_mods and dep not in current_active:
                 for i in range(self.avail.count()):
                     if self.avail.item(i) and self.avail.item(i).mid == dep:
                         self.avail.takeItem(i)
@@ -44,36 +48,32 @@ class ModFixes:
                 self._mk_active(dep)
                 activated += 1
 
+        self._show_fix_report(issues, activated, [])
         if downloadable:
             self._offer_download(downloadable, activated)
-            return
-        self._show_fix_report(issues, activated, [])
 
     def _offer_download(self, downloadable: list, already_activated: int):
         mod_list = "\n".join(
             f"  - {name} ({wid})" for wid, name in downloadable[:10])
         if len(downloadable) > 10:
             mod_list += f"\n  ... and {len(downloadable) - 10} more"
-        msg = (f"{len(downloadable)} mod(s) need downloading:"
-               f"\n\n{mod_list}\n\nDownload now?")
+
+        msg = (f"{len(downloadable)} mod(s) can be downloaded:"
+               f"\n\n{mod_list}\n\nOpen Download Manager?")
         if already_activated:
-            msg = f"[FIXED] Activated {already_activated} dep(s).\n\n" + msg
+            msg = f"Activated {already_activated} dep(s).\n\n" + msg
 
         if QMessageBox.question(
-                self, "Download Required", msg,
+                self, "Download Mods", msg,
                 QMessageBox.StandardButton.Yes |
-                QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+                QMessageBox.StandardButton.No
+        ) == QMessageBox.StandardButton.Yes:
             self._start_download(downloadable)
-        else:
-            issues = analyze_modlist(
-                self.active.get_ids(), self.rw,
-                self.inst.rimworld_version or '',
-                ignored_deps=self._ignored_deps_set())
-            self._show_fix_report(issues, already_activated, [])
+
 
     def _start_download(self, mods_to_download: list):
-        from app.ui.modeditor.download_dialog import DownloadProgressDialog
         from app.core.app_settings import AppSettings
+        from app.core.paths import mods_dir
         _s            = AppSettings.instance()
         steamcmd_path = _s.steamcmd_path
         data_root     = _s.data_root
@@ -84,53 +84,67 @@ class ModFixes:
                                 "Set the SteamCMD path in Settings.")
             return
         if not data_root:
-            QMessageBox.warning(self, "Error", "Data root not configured.")
+            QMessageBox.warning(self, "Error",
+                                "Data root not configured.")
             return
 
+        from app.core.steamcmd import DownloadQueue
         queue = DownloadQueue(
             steamcmd_path=steamcmd_path,
             destination=str(Path(data_root) / 'mods'),
             max_concurrent=2,
-            username=username)              # ← fixed
-        dlg = DownloadProgressDialog(self, queue, mods_to_download)
-        dlg.downloads_complete.connect(self._on_downloads_complete)
-        dlg.exec()
+            username=username)
 
-    def _on_downloads_complete(self, results: list):
-        ok  = sum(1 for _, s, _ in results if s)
-        bad = len(results) - ok
+        from app.ui.modeditor.download_manager import DownloadManagerWindow
+        mgr = DownloadManagerWindow(queue, self)
+        mgr.queue_and_show(mods_to_download)
 
-        if ok:
-            self.all_mods = self.rw.get_installed_mods(force_rescan=True,
-                                                        max_age_seconds=0)
-            self.names    = {pid: i.name for pid, i in self.all_mods.items()}
-            issues        = analyze_modlist(
-                self.active.get_ids(), self.rw,
-                self.inst.rimworld_version or '')
-            newly = 0
-            for dep in get_activatable_deps(issues):
-                if (dep in self.all_mods and
-                        dep not in set(self.active.get_ids())):
-                    self._mk_active(dep)
-                    newly += 1
-            msg = f"Downloaded {ok} mod(s)."
-            if newly:
-                msg += f"\nActivated {newly} dep(s)."
-            if bad:
-                msg += f"\n\n{bad} download(s) failed."
-            QMessageBox.information(self, "Downloads Complete", msg)
-        elif bad:
-            QMessageBox.warning(self, "Downloads Failed",
-                                f"All {bad} download(s) failed.")
+        # Connect completion to refresh mods after downloads finish
+        queue.queue_empty.connect(
+            lambda: self._on_fix_downloads_complete(queue, mgr))
 
-        self.active.apply_item_widgets()
-        self._refresh_inner()
+    def _on_fix_downloads_complete(self, queue, mgr):
+        """Called when all fix-issue downloads finish."""
+        self.all_mods = self.rw.get_installed_mods(
+            extra_mod_paths=self._extra_mod_paths(),
+            force_rescan=True,
+            max_age_seconds=0)
+        self.names = {pid: i.name for pid, i in self.all_mods.items()}
+
         issues = analyze_modlist(
             self.active.get_ids(), self.rw,
             self.inst.rimworld_version or '',
-            ignored_deps=self._ignored_deps_set())
+            ignored_deps=self._ignored_deps_set(),
+            extra_mod_paths=self._extra_mod_paths(),
+            known_workshop_ids=self._known_workshop_ids())
+
+        newly = 0
+        for dep in get_activatable_deps(issues):
+            if (dep in self.all_mods and
+                    dep not in set(self.active.get_ids())):
+                self._mk_active(dep)
+                newly += 1
+
+        if newly:
+            self.active.apply_item_widgets()
+            self._refresh_inner()
+
         if issues:
-            self._show_fix_report(issues, 0, results)
+            self._show_fix_report(issues, newly, [])
+
+        newly = 0
+        for dep in get_activatable_deps(issues):
+            if (dep in self.all_mods and
+                    dep not in set(self.active.get_ids())):
+                self._mk_active(dep)
+                newly += 1
+
+        if newly:
+            self.active.apply_item_widgets()
+            self._refresh_inner()
+
+        if issues:
+            self._show_fix_report(issues, newly, [])
 
     def _show_fix_report(self, issues: list, activated: int,
                          dl_results: list):
@@ -206,3 +220,34 @@ class ModFixes:
         self._batch_load_active(mods)
         if self._filter_on:
             self._apply_filter()
+
+    def _extra_mod_paths(self) -> list[str]:
+        from app.core.app_settings import AppSettings
+        from app.core.paths import mods_dir
+        from pathlib import Path
+        _s    = AppSettings.instance()
+        paths = []
+        if _s.data_root:
+            paths.append(str(mods_dir(Path(_s.data_root))))
+        if _s.steam_workshop_path:
+            paths.append(_s.steam_workshop_path)
+        return paths
+    
+    def _known_workshop_ids(self) -> dict[str, str]:
+        """
+        Build workshop ID map from:
+        1. Instance mod_workshop_ids (populated from .onyx import)
+        2. Installed mod metadata (workshop_id field from PublishedFileId.txt)
+        """
+        result: dict[str, str] = {}
+
+        # From installed mods metadata
+        for mid, info in self.all_mods.items():
+            if info.workshop_id:
+                result[mid] = info.workshop_id
+
+        # From instance stored IDs (overrides — more reliable for
+        # mods not currently installed)
+        result.update(self.inst.mod_workshop_ids)
+
+        return result

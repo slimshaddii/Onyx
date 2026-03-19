@@ -347,11 +347,10 @@ class OnyxImportDialog(QDialog):
                 QMessageBox.StandardButton.Yes)
 
             if reply == QMessageBox.StandardButton.Yes:
+                self.accept()   # close import dialog first
                 self._queue_downloads(downloadable)
-                QMessageBox.information(
-                    self, "Downloads Queued",
-                    f"Queued {len(downloadable)} mod(s) for download.\n"
-                    "Check the Workshop browser for progress.")
+                return
+            
         else:
             # No downloadable mods or no download queue configured
             if downloadable and not self.dl_queue:
@@ -364,6 +363,42 @@ class OnyxImportDialog(QDialog):
         self.accept()
 
     def _queue_downloads(self, mods: list):
-        """Enqueue all downloadable missing mods into the DownloadQueue."""
-        for mod in mods:
-            self.dl_queue.enqueue(mod.workshop_id, mod.name)
+        """Show download manager for missing mods."""
+        from app.core.app_settings import AppSettings
+        from app.core.paths import mods_dir
+        from pathlib import Path
+        from app.ui.modeditor.download_manager import DownloadManagerWindow
+
+        _s = AppSettings.instance()
+        if not _s.steamcmd_path or not Path(_s.steamcmd_path).exists():
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "SteamCMD Not Configured",
+                "Set the SteamCMD path in Settings to download mods.")
+            return
+
+        pairs = [(mod.workshop_id, mod.name)
+                 for mod in mods if mod.workshop_id]
+        if not pairs:
+            return
+
+        mgr = DownloadManagerWindow(self.dl_queue, self)
+        mgr.queue_and_show(pairs)
+
+    def _on_downloads_complete(self, results: list):
+        ok  = sum(1 for _, s, _ in results if s)
+        bad = len(results) - ok
+        from PyQt6.QtWidgets import QMessageBox
+        if ok and bad:
+            QMessageBox.information(
+                self, "Downloads Complete",
+                f"Downloaded {ok} mod(s).\n{bad} failed.")
+        elif ok:
+            QMessageBox.information(
+                self, "Downloads Complete",
+                f"Downloaded {ok} mod(s) successfully.")
+        elif bad:
+            QMessageBox.warning(
+                self, "Downloads Failed",
+                f"All {bad} download(s) failed.\n"
+                "Check SteamCMD configuration in Settings.")

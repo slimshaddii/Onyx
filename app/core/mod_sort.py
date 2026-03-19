@@ -89,17 +89,11 @@ def auto_sort_mods(mod_ids: list[str], rw: RimWorldDetector) -> list[str]:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _all_deps(info: ModInfo) -> list[str]:
-    """
-    Return the effective dependency list for sorting purposes.
-    forced_dependencies are always included.
-    Regular dependencies (already version-resolved in ModInfo) are included.
-    Both feed into loadAfter semantics: "load me AFTER these".
-    """
     seen:   set[str]  = set()
     result: list[str] = []
-    for pid in (*info.forced_dependencies,
-                *info.dependencies,
-                *info.load_after):
+    for pid in (*getattr(info, 'forced_dependencies', []),
+                *getattr(info, 'dependencies', []),
+                *getattr(info, 'load_after', [])):
         pl = pid.lower()
         if pl not in seen:
             seen.add(pl)

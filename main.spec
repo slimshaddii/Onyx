@@ -3,6 +3,16 @@
 import sys
 from pathlib import Path
 
+import subprocess
+def _get_version() -> str:
+    try:
+        tag = subprocess.check_output(
+            ['git', 'describe', '--tags', '--abbrev=0'],
+            stderr=subprocess.DEVNULL).decode().strip()
+        return f"OnyxLauncher-{tag}"
+    except Exception:
+        return "OnyxLauncher-Beta"
+
 block_cipher = None
 
 a = Analysis(
@@ -146,5 +156,5 @@ coll = COLLECT(
         'Qt6*.so',
         'libQt6*.so*',
     ],
-    name='OnyxLauncher-Beta',   # Output folder name in dist/
+    name=_get_version(),   # Output folder name in dist/
 )
