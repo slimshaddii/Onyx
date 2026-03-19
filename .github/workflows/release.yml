@@ -173,7 +173,7 @@ jobs:
             A mod manager and instance launcher for RimWorld with true per-instance isolation.
 
             ### What's New
-            - FDM-style Download Manager with real-time speed, ETA, and file size pre-fetch
+            - Download Manager with real-time speed, ETA, and file size pre-fetch
             - Steam Workshop collection download with nested collection support
             - Mod Library browser with preview images, descriptions, sort and filter
             - Mod Update Checker via Steam API with auto-check on startup option
