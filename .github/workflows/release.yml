@@ -36,7 +36,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-build
-          path: dist/OnyxLauncher-Beta-windows.zip
+          path: dist/*.zip
           retention-days: 1
 
   build-linux:
@@ -122,7 +122,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-build
-          path: dist/OnyxLauncher-Beta-linux.zip
+          path: dist/*.zip
           retention-days: 1
 
   build-macos:
@@ -151,7 +151,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-build
-          path: dist/OnyxLauncher-Beta-macos.zip
+          path: dist/*.zip
           retention-days: 1
 
   release:
