@@ -170,6 +170,22 @@ jobs:
           body: |
             ## Onyx Launcher ${{ github.ref_name }}
 
+            A mod manager and instance launcher for RimWorld with true per-instance isolation.
+
+            ### What's New
+            - FDM-style Download Manager with real-time speed, ETA, and file size pre-fetch
+            - Steam Workshop collection download with nested collection support
+            - Mod Library browser with preview images, descriptions, sort and filter
+            - Mod Update Checker via Steam API with auto-check on startup option
+            - Startup Analysis tab in Log Viewer showing phase timings and peak memory
+            - Multi-version RimWorld support via per-instance executable override
+            - Prism-style collapsible instance groups with drag-drop
+            - Save rename and delete from Edit Instance
+            - alternativePackageIds support for dependency satisfaction
+            - RimWorld 1.6 plain XML save format support for compatibility badges
+            - Light theme improvements throughout
+            - Linux and Steam Deck path detection
+
             ### Downloads
             | Platform | File |
             |---|---|
@@ -184,7 +200,9 @@ jobs:
 
             ### Notes
             - First launch may take a few seconds while Qt initializes
-            - Linux users may need to `chmod +x OnyxLauncher` before running
+            - Linux and macOS users may need to run `chmod +x OnyxLauncher` first
+            - Non-Steam RimWorld is fully supported via SteamCMD
+            - Steam Deck is supported — auto-detection includes Flatpak and native Steam paths
           files: |
             artifacts/windows-build/OnyxLauncher-Beta-windows.zip
             artifacts/linux-build/OnyxLauncher-Beta-linux.zip
