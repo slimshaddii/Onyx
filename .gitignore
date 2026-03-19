@@ -1,5 +1,8 @@
+__pycache__/
 dist/
 build/
-
+*.pyc
+*.spec
+.vscode/
 app_settings.json
 structure.txt
