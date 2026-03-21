@@ -9,12 +9,22 @@ from pathlib import Path
 from typing import Optional
 
 from app.core.instance import Instance
-from app.core.modlist import write_mods_config, read_mods_config, VANILLA_MODS, ALL_DLCS
+from app.core.modlist import (
+    write_mods_config,
+    read_mods_config,
+    VANILLA_MODS,
+    ALL_DLCS,
+)
 from app.core.paths import get_default_rw_data
 from app.utils.file_utils import ensure_dir, safe_delete_tree
 
+
+# ── Module-Level Constants ────────────────────────────────────────────────────
+
 DEFAULT_VERSION = '1.6.4630 rev467'
 
+
+# ── InstanceManager ───────────────────────────────────────────────────────────
 
 class InstanceManager:
     """
@@ -31,14 +41,15 @@ class InstanceManager:
 
     def scan_instances(self) -> list[Instance]:
         """
-        Return all valid instances found under instances_root, sorted by name.
+        Return all valid instances found under instances_root,
+        sorted by name.
 
-        A valid instance is a directory containing instance.json that
-        Instance.load() can parse without error.
+        A valid instance is a directory containing instance.json
+        that Instance.load() can parse without error.
         """
         if not self.instances_root.exists():
             return []
-        instances = []
+        instances: list[Instance] = []
         for folder in sorted(self.instances_root.iterdir()):
             if folder.is_dir() and (folder / 'instance.json').exists():
                 inst = Instance.load(folder)
@@ -50,11 +61,11 @@ class InstanceManager:
 
     def create_instance(
             self,
-            name:    str,
-            path:    Optional[Path] = None,
-            mods:    Optional[list[str]] = None,
+            name: str,
+            path: Optional[Path] = None,
+            mods: Optional[list[str]] = None,
             version: str = DEFAULT_VERSION,
-            notes:   str = '',
+            notes: str = '',
     ) -> Instance:
         """
         Create a new instance at the given path (or instances_root/name).
@@ -73,18 +84,21 @@ class InstanceManager:
         write_mods_config(inst_path / 'Config', mod_list, version)
 
         inst = Instance(
-            name=name, path=inst_path, mods=mod_list,
+            name=name,
+            path=inst_path,
+            mods=mod_list,
             created=datetime.now().isoformat(),
-            rimworld_version=version, notes=notes,
+            rimworld_version=version,
+            notes=notes,
         )
         inst.save()
         return inst
 
     def create_vanilla_instance(
             self,
-            name:       str,
+            name: str,
             owned_dlcs: Optional[list[str]] = None,
-            version:    str = DEFAULT_VERSION,
+            version: str = DEFAULT_VERSION,
     ) -> Instance:
         """
         Create an instance pre-populated with Core and any owned DLCs.
@@ -106,8 +120,12 @@ class InstanceManager:
         """Permanently delete an instance directory and all its contents."""
         safe_delete_tree(inst.path)
 
-    def duplicate_instance(self, inst: Instance, new_name: str,
-                           new_path: Optional[Path] = None) -> Instance:
+    def duplicate_instance(
+            self,
+            inst: Instance,
+            new_name: str,
+            new_path: Optional[Path] = None,
+    ) -> Instance:
         """
         Create a full copy of inst under new_name (or new_path).
 
@@ -121,7 +139,7 @@ class InstanceManager:
         inst.name = new_name
         inst.save()
 
-    # ── Import / detection ────────────────────────────────────────────────────
+    # ── Import / Detection ────────────────────────────────────────────────────
 
     def detect_existing_rw_data(self) -> Optional[dict]:
         """
@@ -138,15 +156,19 @@ class InstanceManager:
         config_dir = default / 'Config'
         saves_dir  = default / 'Saves'
 
-        has_config = (config_dir.exists()
-                      and (config_dir / 'ModsConfig.xml').exists())
-        has_saves  = saves_dir.exists() and any(saves_dir.glob('*.rws'))
+        has_config = (
+            config_dir.exists()
+            and (config_dir / 'ModsConfig.xml').exists()
+        )
+        has_saves = saves_dir.exists() and any(saves_dir.glob('*.rws'))
 
         if not has_config and not has_saves:
             return None
 
-        mods, version = _read_existing_config(config_dir) if has_config \
-            else ([], '')
+        mods, version = (
+            _read_existing_config(config_dir)
+            if has_config else ([], '')
+        )
         save_count = _count_saves(saves_dir) if has_saves else 0
 
         return {
@@ -177,7 +199,9 @@ class InstanceManager:
 
         mods, version = _read_existing_config(target / 'Config')
         inst = Instance(
-            name=name, path=target, mods=mods,
+            name=name,
+            path=target,
+            mods=mods,
             created=datetime.now().isoformat(),
             rimworld_version=version or DEFAULT_VERSION,
             notes='Imported from existing RimWorld data',
@@ -185,14 +209,14 @@ class InstanceManager:
         inst.save()
         return inst
 
-    # ── Query ─────────────────────────────────────────────────────────────────
+    # ── Query ──────────────────────────────────────────────────────────────
 
     def instance_exists(self, name: str) -> bool:
-        """Return True if a directory named name already exists under instances_root."""
+        """Return True if name directory exists under instances_root."""
         return (self.instances_root / name).exists()
 
 
-# ── Module-level helpers ──────────────────────────────────────────────────────
+# ── Module-Level Helpers ──────────────────────────────────────────────────────
 
 def _read_existing_config(config_dir: Path) -> tuple[list[str], str]:
     """
@@ -223,4 +247,3 @@ def _copy_dir_or_create(src: Path, dst: Path) -> None:
         shutil.copytree(src, dst)
     else:
         ensure_dir(dst)
-        

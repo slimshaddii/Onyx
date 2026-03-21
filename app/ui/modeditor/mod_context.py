@@ -1,9 +1,12 @@
-"""Context menus, delete, redownload, and dep-ignore for ModEditorDialog."""
+"""Context menus, delete, redownload, and dep-ignore
+for ModEditorDialog."""
 
 import shutil
 from pathlib import Path
 
-from PyQt6.QtWidgets import QMenu, QMessageBox  # pylint: disable=no-name-in-module
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
+    QMenu, QMessageBox,
+)
 from PyQt6.QtCore import Qt  # pylint: disable=no-name-in-module
 
 from app.core.app_settings import AppSettings
@@ -11,8 +14,12 @@ from app.core.mod_linker import delete_mod_permanently
 from app.core.modlist import VANILLA_AND_DLCS
 from app.core.steam_integration import open_workshop_page
 from app.core.steamcmd import DownloadQueue
-from app.ui.modeditor.issue_checker import get_badges, make_error_key
+from app.ui.modeditor.issue_checker import (
+    get_badges, make_error_key,
+)
 
+
+# ── ModContext Mixin ─────────────────────────────────────────
 
 class ModContext:
     """Mixin for ModEditorDialog.
@@ -22,6 +29,8 @@ class ModContext:
               self._rem_sel(), self._add_sel(),
               self._remove_from_instance_batch(),
               self._ignored_deps_set(),
+              self._ignored_errors_set(),
+              self._extra_mod_paths(),
               self._refresh_badges(), self._update(),
               self._update_empty_hint(),
               self.avail.apply_item_widgets()
@@ -40,11 +49,14 @@ class ModContext:
         rem = m.addAction("Deactivate")
         if mid.lower() == 'ludeon.rimworld':
             rem.setEnabled(False)
-            rem.setText("Deactivate (Core — required)")
+            rem.setText(
+                "Deactivate (Core — required)")
         else:
             rem.triggered.connect(self._rem_sel)
 
-        dependencies = getattr(info, 'dependencies', []) if info else []
+        dependencies = (
+            getattr(info, 'dependencies', [])
+            if info else [])
         if dependencies:
             active_set = set(self.active.get_ids())
             ignored    = self._ignored_deps_set()
@@ -56,81 +68,107 @@ class ModContext:
             ]
             if ignorable:
                 m.addSeparator()
-                ignore_menu = m.addMenu("Ignore dependency warning…")
+                ignore_menu = m.addMenu(
+                    "Ignore dependency warning…")
                 for dep in ignorable:
-                    dep_name = self.names.get(dep, dep)
+                    dep_name = self.names.get(
+                        dep, dep)
                     dep_key  = f"{mid}:{dep}"
                     ignore_menu.addAction(
                         f"Ignore '{dep_name}'",
-                        lambda dk=dep_key: self._ignore_dep(dk))
+                        lambda dk=dep_key:
+                            self._ignore_dep(dk))
 
             already_ignored = [
                 dep for dep in dependencies
                 if f"{mid}:{dep}" in ignored
             ]
             if already_ignored:
-                restore_menu = m.addMenu("Remove ignored warning…")
+                restore_menu = m.addMenu(
+                    "Remove ignored warning…")
                 for dep in already_ignored:
-                    dep_name = self.names.get(dep, dep)
+                    dep_name = self.names.get(
+                        dep, dep)
                     dep_key  = f"{mid}:{dep}"
                     restore_menu.addAction(
                         f"Restore '{dep_name}'",
-                        lambda dk=dep_key: self._restore_dep(dk))
+                        lambda dk=dep_key:
+                            self._restore_dep(dk))
 
         if info:
             order      = self.active.get_ids()
             active_ids = set(order)
             all_badges = get_badges(
                 mid, self.all_mods, active_ids,
-                self.inst.rimworld_version or '', order,
-                ignored_deps=self._ignored_deps_set(),
+                self.inst.rimworld_version or '',
+                order,
+                ignored_deps=(
+                    self._ignored_deps_set()),
                 ignored_errors=set())
 
-            ignored_errs = self._ignored_errors_set()
+            ignored_errs = (
+                self._ignored_errors_set())
 
             ignorable_errs = [
                 b for b in all_badges
-                if make_error_key(mid, b[2], b[3]) not in ignored_errs
+                if make_error_key(mid, b[2], b[3])
+                not in ignored_errs
             ]
             already_ignored_errs = [
                 b for b in all_badges
-                if make_error_key(mid, b[2], b[3]) in ignored_errs
+                if make_error_key(mid, b[2], b[3])
+                in ignored_errs
             ]
 
             if ignorable_errs:
                 m.addSeparator()
-                ign_menu = m.addMenu("Ignore error/warning…")
+                ign_menu = m.addMenu(
+                    "Ignore error/warning…")
                 for b in ignorable_errs:
-                    key   = make_error_key(mid, b[2], b[3])
+                    key = make_error_key(
+                        mid, b[2], b[3])
                     label = f"{b[0]} {b[3][:60]}"
-                    ign_menu.addAction(label,
-                                       lambda k=key: self._ignore_error(k))
+                    ign_menu.addAction(
+                        label,
+                        lambda k=key:
+                            self._ignore_error(k))
 
             if already_ignored_errs:
-                rst_menu = m.addMenu("Restore suppressed error/warning…")
+                rst_menu = m.addMenu(
+                    "Restore suppressed "
+                    "error/warning…")
                 for b in already_ignored_errs:
-                    key   = make_error_key(mid, b[2], b[3])
+                    key = make_error_key(
+                        mid, b[2], b[3])
                     label = f"{b[0]} {b[3][:60]}"
-                    rst_menu.addAction(label,
-                                       lambda k=key: self._restore_error(k))
+                    rst_menu.addAction(
+                        label,
+                        lambda k=key:
+                            self._restore_error(k))
 
-        if (info and info.path and info.path.exists()
+        if (info and info.path
+                and info.path.exists()
                 and mid not in VANILLA_AND_DLCS):
             m.addSeparator()
-            m.addAction("🗑 Delete mod files…",
-                        lambda: self._del_mod(mid))
+            m.addAction(
+                "🗑 Delete mod files…",
+                lambda: self._del_mod(mid))
 
         if info and info.workshop_id:
-            m.addAction("⟳ Redownload from Workshop",
-                        lambda: self._redownload_mod(mid))
-            m.addAction("Workshop page",
-                        lambda: open_workshop_page(info.workshop_id))
+            m.addAction(
+                "⟳ Redownload from Workshop",
+                lambda: self._redownload_mod(mid))
+            m.addAction(
+                "Workshop page",
+                lambda: open_workshop_page(
+                    info.workshop_id))
 
         m.exec(self.active.mapToGlobal(pos))
 
     def _ignore_error(self, error_key: str):
         if error_key not in self.inst.ignored_errors:
-            self.inst.ignored_errors.append(error_key)
+            self.inst.ignored_errors.append(
+                error_key)
             self.inst.save()
         self._refresh_badges()
         self.active.apply_item_widgets()
@@ -138,7 +176,8 @@ class ModContext:
 
     def _restore_error(self, error_key: str):
         if error_key in self.inst.ignored_errors:
-            self.inst.ignored_errors.remove(error_key)
+            self.inst.ignored_errors.remove(
+                error_key)
             self.inst.save()
         self._refresh_badges()
         self.active.apply_item_widgets()
@@ -160,46 +199,63 @@ class ModContext:
         ]
         if removable:
             m.addSeparator()
-            label = ("Remove from Instance" if len(removable) == 1
-                     else f"Remove {len(removable)} from Instance")
-            m.addAction(label,
-                        lambda: self._remove_from_instance_batch(removable))
+            label = (
+                "Remove from Instance"
+                if len(removable) == 1
+                else f"Remove {len(removable)}"
+                     f" from Instance")
+            m.addAction(
+                label,
+                lambda:
+                    self._remove_from_instance_batch(
+                        removable))
 
-        if (info and info.path and info.path.exists()
+        if (info and info.path
+                and info.path.exists()
                 and mid not in VANILLA_AND_DLCS):
             m.addSeparator()
-            m.addAction("🗑 Delete mod files…",
-                        lambda: self._del_mod(mid))
+            m.addAction(
+                "🗑 Delete mod files…",
+                lambda: self._del_mod(mid))
 
         if info and info.workshop_id:
-            m.addAction("⟳ Redownload from Workshop",
-                        lambda: self._redownload_mod(mid))
-            m.addAction("Workshop page",
-                        lambda: open_workshop_page(info.workshop_id))
+            m.addAction(
+                "⟳ Redownload from Workshop",
+                lambda: self._redownload_mod(mid))
+            m.addAction(
+                "Workshop page",
+                lambda: open_workshop_page(
+                    info.workshop_id))
 
         m.exec(self.avail.mapToGlobal(pos))
 
     def _del_mod(self, mid: str):
         info = self.all_mods.get(mid)
         if not info or not info.path:
-            QMessageBox.warning(self, "Delete", "Cannot find mod path.")
+            QMessageBox.warning(
+                self, "Delete",
+                "Cannot find mod path.")
             return
 
         name     = info.name
         mod_path = info.path
 
         if not mod_path.exists():
-            QMessageBox.warning(self, "Delete",
-                                f"Mod folder not found:\n{mod_path}")
+            QMessageBox.warning(
+                self, "Delete",
+                f"Mod folder not found:\n"
+                f"{mod_path}")
             return
 
         reply = QMessageBox.question(
             self, "Delete Mod Files",
             f"Permanently delete '{name}'?\n\n"
             f"  {mod_path}\n\n"
-            f"This cannot be undone. The mod will be removed from this "
+            f"This cannot be undone. The mod "
+            f"will be removed from this "
             f"instance and deleted from disk.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            (QMessageBox.StandardButton.Yes
+             | QMessageBox.StandardButton.No),
             QMessageBox.StandardButton.No)
 
         if reply != QMessageBox.StandardButton.Yes:
@@ -207,86 +263,114 @@ class ModContext:
 
         for lst in (self.active, self.avail):
             for i in range(lst.count()):
-                if lst.item(i) and lst.item(i).data(
-                        Qt.ItemDataRole.UserRole) == mid:
+                if (lst.item(i)
+                        and lst.item(i).data(
+                            Qt.ItemDataRole.UserRole
+                        ) == mid):
                     lst.takeItem(i)
                     break
 
         _s = AppSettings.instance()
 
-        workshop_id   = info.workshop_id or info.path.name
-        onyx_mods_dir = Path(_s.data_root) / 'mods' if _s.data_root else None
-        game_mods_dir = (Path(_s.rimworld_exe).parent / 'Mods'
-                         if _s.rimworld_exe else None)
+        workshop_id = (
+            info.workshop_id or info.path.name)
+        onyx_mods_dir = (
+            Path(_s.data_root) / 'mods'
+            if _s.data_root else None)
+        game_mods_dir = (
+            Path(_s.rimworld_exe).parent / 'Mods'
+            if _s.rimworld_exe else None)
 
         if onyx_mods_dir:
             result = delete_mod_permanently(
                 workshop_id=workshop_id,
                 onyx_mods_dir=onyx_mods_dir,
-                game_mods_dir=game_mods_dir or Path(),
+                game_mods_dir=(
+                    game_mods_dir or Path()),
                 steamcmd_path=_s.steamcmd_path)
             if result['errors']:
                 QMessageBox.warning(
                     self, "Delete",
-                    "Deleted with warnings:\n" +
-                    "\n".join(result['errors']))
+                    "Deleted with warnings:\n"
+                    + "\n".join(result['errors']))
         else:
             try:
                 shutil.rmtree(str(mod_path))
             except OSError as e:
-                QMessageBox.critical(self, "Delete Failed", str(e))
+                QMessageBox.critical(
+                    self, "Delete Failed", str(e))
                 return
 
-            self.all_mods = self.rw.get_installed_mods(
-                extra_mod_paths=self._extra_mod_paths(),
-                force_rescan=True,
-                max_age_seconds=0)
-
-        self.names = {pid: i.name for pid, i in self.all_mods.items()}
+        self.all_mods = self.rw.get_installed_mods(
+            extra_mod_paths=(
+                self._extra_mod_paths()),
+            force_rescan=True,
+            max_age_seconds=0)
+        self.names = {
+            pid: i.name
+            for pid, i in self.all_mods.items()
+        }
         self.avail.apply_item_widgets()
         self._update_empty_hint()
         self._update()
-        QMessageBox.information(self, "Deleted", f"'{name}' was deleted.")
+        QMessageBox.information(
+            self, "Deleted",
+            f"'{name}' was deleted.")
 
     def _redownload_mod(self, mid: str):
         info = self.all_mods.get(mid)
         if not info or not info.workshop_id:
             QMessageBox.warning(
                 self, "Redownload",
-                "This mod has no Workshop ID — cannot redownload.")
+                "This mod has no Workshop ID — "
+                "cannot redownload.")
             return
 
         _s            = AppSettings.instance()
         steamcmd_path = _s.steamcmd_path
         data_root     = _s.data_root
 
-        if not steamcmd_path or not Path(steamcmd_path).exists():
+        if (not steamcmd_path
+                or not Path(
+                    steamcmd_path).exists()):
             QMessageBox.warning(
                 self, "SteamCMD Not Configured",
-                "Set the SteamCMD path in Settings to redownload mods.")
+                "Set the SteamCMD path in Settings"
+                " to redownload mods.")
             return
         if not data_root:
-            QMessageBox.warning(self, "Error", "Data root not configured.")
+            QMessageBox.warning(
+                self, "Error",
+                "Data root not configured.")
             return
 
         from app.ui.modeditor.download_manager import DownloadManagerWindow  # pylint: disable=import-outside-toplevel
-        queue = DownloadQueue(
+        _queue = DownloadQueue(
             steamcmd_path=steamcmd_path,
-            destination=str(Path(data_root) / 'mods'),
+            destination=str(
+                Path(data_root) / 'mods'),
             max_concurrent=1,
             username=_s.steamcmd_username)
-        mgr = DownloadManagerWindow(queue, self)
-        mgr.queue_and_show([(info.workshop_id, info.name)])
-        queue.queue_empty.connect(
-            lambda: self._on_redownload_done_mgr(info.name, queue))
+        _mgr = DownloadManagerWindow(
+            _queue, self)
+        _mgr.queue_and_show(
+            [(info.workshop_id, info.name)])
+        _queue.queue_empty.connect(
+            lambda: self._on_redownload_done_mgr(
+                info.name, _queue))
 
-    def _on_redownload_done_mgr(self, _mod_name: str, _queue):
-        """Refresh mod data after a redownload completes via download manager."""
+    def _on_redownload_done_mgr(
+            self, _mod_name: str, _queue):
+        """Refresh mod data after redownload."""
         self.all_mods = self.rw.get_installed_mods(
-            extra_mod_paths=self._extra_mod_paths(),
+            extra_mod_paths=(
+                self._extra_mod_paths()),
             force_rescan=True,
             max_age_seconds=0)
-        self.names = {pid: i.name for pid, i in self.all_mods.items()}
+        self.names = {
+            pid: i.name
+            for pid, i in self.all_mods.items()
+        }
         self._refresh_badges()
         self.active.apply_item_widgets()
 

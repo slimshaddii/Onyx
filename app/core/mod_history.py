@@ -6,9 +6,9 @@ Each snapshot records the ordered active mod list and a human label.
 Max snapshots kept: 50 (older ones are pruned automatically).
 """
 
-import json
 from dataclasses import dataclass
 from datetime import datetime
+import json
 from pathlib import Path
 
 MAX_SNAPSHOTS = 50
@@ -20,9 +20,9 @@ class Snapshot:
     A single point-in-time record of an instance's active mod list.
 
     timestamp : ISO-8601 string of when the snapshot was taken.
-    label     : Human-readable label, e.g. 'Auto-save' or user-supplied text.
+    label     : Human-readable label, e.g. 'Auto-save'.
     mods      : Ordered list of active mod package IDs.
-    mod_count : Convenience copy of len(mods), stored for quick display.
+    mod_count : Convenience copy of len(mods).
     """
 
     timestamp: str
@@ -32,7 +32,7 @@ class Snapshot:
 
     @classmethod
     def from_dict(cls, d: dict) -> 'Snapshot':
-        """Construct a Snapshot from a JSON-decoded dict, tolerating missing keys."""
+        """Construct from a JSON-decoded dict, tolerating missing keys."""
         mods = d.get('mods', [])
         return cls(
             timestamp=d.get('timestamp', ''),
@@ -42,7 +42,7 @@ class Snapshot:
         )
 
     def to_dict(self) -> dict:
-        """Serialise this Snapshot to a plain dict suitable for json.dump."""
+        """Serialise to a plain dict suitable for json.dump."""
         return {
             'timestamp': self.timestamp,
             'label':     self.label,
@@ -52,13 +52,15 @@ class Snapshot:
 
     def fmt_date(self) -> str:
         """
-        Return a human-readable date string for the snapshot timestamp.
+        Return a human-readable date string.
 
-        Falls back to the raw timestamp string (first 16 chars) if parsing fails.
+        Falls back to the raw timestamp (first 16 chars) if
+        parsing fails.
         """
         try:
             return datetime.fromisoformat(
-                self.timestamp).strftime("%b %d, %Y  %H:%M")
+                self.timestamp
+            ).strftime("%b %d, %Y  %H:%M")
         except (ValueError, TypeError):
             return self.timestamp[:16]
 
@@ -71,20 +73,24 @@ class ModHistory:
         self._snapshots: list[Snapshot] = []
         self._load()
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    # ── Public API ────────────────────────────────────────
 
     @property
     def snapshots(self) -> list[Snapshot]:
         """All snapshots, newest first."""
         return list(self._snapshots)
 
-    def record(self, mods: list[str], label: str = 'Auto-save') -> None:
+    def record(self, mods: list[str],
+               label: str = 'Auto-save') -> None:
         """
-        Add a new snapshot. Skips recording if the mod list is identical
-        to the most recent snapshot (no point storing a no-op save).
-        Prunes oldest entries when MAX_SNAPSHOTS is exceeded.
+        Add a new snapshot.
+
+        Skips recording if the mod list is identical to the
+        most recent snapshot. Prunes oldest entries when
+        MAX_SNAPSHOTS is exceeded.
         """
-        if self._snapshots and self._snapshots[0].mods == mods:
+        if (self._snapshots
+                and self._snapshots[0].mods == mods):
             return
 
         snap = Snapshot(
@@ -96,22 +102,18 @@ class ModHistory:
         self._snapshots.insert(0, snap)
 
         if len(self._snapshots) > MAX_SNAPSHOTS:
-            self._snapshots = self._snapshots[:MAX_SNAPSHOTS]
+            self._snapshots = (
+                self._snapshots[:MAX_SNAPSHOTS])
 
         self._save()
 
     def diff(self, snap_a: Snapshot,
              snap_b: Snapshot) -> dict[str, list[str]]:
         """
-        Return mods added and removed going from snap_b → snap_a.
+        Return mods added and removed going from snap_b to snap_a.
 
-        Returns
-        -------
-        {
-          'added':   mods in snap_a but not snap_b,
-          'removed': mods in snap_b but not snap_a,
-        }
-        Both lists are alphabetically sorted.
+        Returns {'added': [...], 'removed': [...]},
+        both alphabetically sorted.
         """
         set_a = set(snap_a.mods)
         set_b = set(snap_b.mods)
@@ -131,14 +133,18 @@ class ModHistory:
         self._snapshots.clear()
         self._save()
 
-    # ── Internal ──────────────────────────────────────────────────────────────
+    # ── Internal ──────────────────────────────────────────
 
     def _load(self) -> None:
         if not self._path.exists():
             return
         try:
-            with open(self._path, 'r', encoding='utf-8') as f:
+            with open(self._path, 'r',
+                      encoding='utf-8') as f:
                 data = json.load(f)
+            if not isinstance(data, dict):
+                self._snapshots = []
+                return
             self._snapshots = [
                 Snapshot.from_dict(d)
                 for d in data.get('snapshots', [])
@@ -147,12 +153,16 @@ class ModHistory:
             self._snapshots = []
 
     def _save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.parent.mkdir(
+            parents=True, exist_ok=True)
         tmp = self._path.with_suffix('.json.tmp')
         try:
             with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(
-                    {'snapshots': [s.to_dict() for s in self._snapshots]},
+                    {'snapshots': [
+                        s.to_dict()
+                        for s in self._snapshots
+                    ]},
                     f, indent=2)
             tmp.replace(self._path)
         except OSError:

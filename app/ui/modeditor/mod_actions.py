@@ -2,7 +2,9 @@
 
 from pathlib import Path
 
-from PyQt6.QtWidgets import QMessageBox, QFileDialog  # pylint: disable=no-name-in-module
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
+    QMessageBox, QFileDialog,
+)
 
 from app.core.app_settings import AppSettings
 from app.core.mod_sort import auto_sort_mods
@@ -13,16 +15,19 @@ from app.core.modlist import (
 from app.core.paths import mods_dir
 
 
+# ── ModActions Mixin ──────────────────────────────────────────────────────────
+
 class ModActions:
-    """Mixin for ModEditorDialog.
+    """
+    Mixin for ModEditorDialog.
 
     Requires: self.active, self.avail, self.inst, self.rw,
               self.all_mods, self.names,
               self._defer_updates, self._filter_on,
               self._mk_active(), self._mk_avail(),
               self._refresh_badges(), self._update(),
-              self._update_empty_hint(), self._avail_ids(),
-              self._apply_filter()
+              self._update_empty_hint(),
+              self._avail_ids(), self._apply_filter()
     """
 
     # pylint: disable=no-member,attribute-defined-outside-init
@@ -35,7 +40,9 @@ class ModActions:
         self.active.setUpdatesEnabled(False)
         self.avail.setUpdatesEnabled(False)
 
-        rows = sorted([self.avail.row(it) for it in selected], reverse=True)
+        rows = sorted(
+            [self.avail.row(it) for it in selected],
+            reverse=True)
         mids = [it.mid for it in selected]
         for row in rows:
             self.avail.takeItem(row)
@@ -65,16 +72,20 @@ class ModActions:
                 to_remove.append(it)
 
         if has_core and not to_remove:
-            QMessageBox.warning(self, "Cannot Remove",
-                                "Core (ludeon.rimworld) is required.")
+            QMessageBox.warning(
+                self, "Cannot Remove",
+                "Core (ludeon.rimworld) "
+                "is required.")
             return
 
         self._defer_updates = True
         self.active.setUpdatesEnabled(False)
         self.avail.setUpdatesEnabled(False)
 
-        rows    = sorted([self.active.row(it) for it in to_remove],
-                         reverse=True)
+        rows = sorted(
+            [self.active.row(it)
+             for it in to_remove],
+            reverse=True)
         removed = []
         for row in rows:
             it = self.active.takeItem(row)
@@ -82,7 +93,8 @@ class ModActions:
                 removed.append(it.mid)
         for mid in removed:
             if mid in self.all_mods:
-                self._mk_avail(mid, self.all_mods[mid])
+                self._mk_avail(
+                    mid, self.all_mods[mid])
 
         self.avail.setUpdatesEnabled(True)
         self.active.setUpdatesEnabled(True)
@@ -91,8 +103,9 @@ class ModActions:
         if has_core:
             QMessageBox.information(
                 self, "Note",
-                f"Deactivated {len(removed)} mod(s). "
-                f"Core was kept (required).")
+                f"Deactivated {len(removed)} "
+                f"mod(s). Core was kept "
+                f"(required).")
 
         self.avail.apply_item_widgets()
         self._update_empty_hint()
@@ -104,9 +117,10 @@ class ModActions:
         self.avail.setUpdatesEnabled(False)
 
         items = self.avail.popAllItems()
-        mids  = [it.mid for it in items if it.mid]
+        mids = [it.mid for it in items if it.mid]
         for mid in mids:
-            self._mk_active(mid, skip_badges=True)
+            self._mk_active(
+                mid, skip_badges=True)
 
         self.avail.setUpdatesEnabled(True)
         self.active.setUpdatesEnabled(True)
@@ -126,10 +140,16 @@ class ModActions:
         all_items = self.active._model.allItems()
         # pylint: enable=protected-access
 
-        to_remove = [it for it in all_items
-                     if it.mid.lower() != 'ludeon.rimworld']
-        keep      = [it for it in all_items
-                     if it.mid.lower() == 'ludeon.rimworld']
+        to_remove = [
+            it for it in all_items
+            if it.mid.lower()
+            != 'ludeon.rimworld'
+        ]
+        keep = [
+            it for it in all_items
+            if it.mid.lower()
+            == 'ludeon.rimworld'
+        ]
 
         # pylint: disable=protected-access
         self.active._model.beginResetModel()
@@ -139,7 +159,9 @@ class ModActions:
 
         for it in to_remove:
             if it.mid in self.all_mods:
-                self._mk_avail(it.mid, self.all_mods[it.mid])
+                self._mk_avail(
+                    it.mid,
+                    self.all_mods[it.mid])
 
         self.avail.setUpdatesEnabled(True)
         self.active.setUpdatesEnabled(True)
@@ -150,43 +172,56 @@ class ModActions:
         self._update()
 
     def _on_active_double_click(self, item):
-        """Receives a ModItem from DragDropList.itemDoubleClicked."""
+        """Handle double-click on active list item."""
         if not item:
             return
         if item.mid.lower() == 'ludeon.rimworld':
-            QMessageBox.warning(self, "Cannot Remove",
-                                "Core (ludeon.rimworld) is required.")
+            QMessageBox.warning(
+                self, "Cannot Remove",
+                "Core (ludeon.rimworld) "
+                "is required.")
             return
         row = self.active.row(item)
         if row >= 0:
             self.active.takeItem(row)
         if item.mid in self.all_mods:
-            self._mk_avail(item.mid, self.all_mods[item.mid])
+            self._mk_avail(
+                item.mid,
+                self.all_mods[item.mid])
         self.avail.apply_item_widgets()
         self._update_empty_hint()
         self._update()
 
-    def _remove_from_instance_batch(self, items: list):
-        """Remove a batch of items from the avail list with confirmation."""
+    def _remove_from_instance_batch(
+            self, items: list):
+        """Remove a batch of items from the avail list."""
         if not items:
             return
         names = []
         for it in items:
             info = self.all_mods.get(it.mid)
-            names.append(info.name if info else it.mid)
+            names.append(
+                info.name if info else it.mid)
 
-        msg  = f"Remove {len(items)} mod(s) from this instance?\n\n"
-        msg += "\n".join(f"  - {n}" for n in names[:10])
+        msg = (f"Remove {len(items)} mod(s) from "
+               f"this instance?\n\n")
+        msg += "\n".join(
+            f"  - {n}" for n in names[:10])
         if len(names) > 10:
-            msg += f"\n  ... and {len(names) - 10} more"
-        msg += "\n\nThey will still be available in the Library."
+            msg += (f"\n  ... and "
+                    f"{len(names) - 10} more")
+        msg += ("\n\nThey will still be available "
+                "in the Library.")
 
-        if QMessageBox.question(self, "Remove from Instance",
-                                msg) != QMessageBox.StandardButton.Yes:
+        if (QMessageBox.question(
+                self, "Remove from Instance", msg)
+                != QMessageBox.StandardButton.Yes):
             return
 
         self.avail.setUpdatesEnabled(False)
-        rows = sorted([self.avail.row(it) for it in items], reverse=True)
+        rows = sorted(
+            [self.avail.row(it) for it in items],
+            reverse=True)
         for row in rows:
             self.avail.takeItem(row)
         self.avail.setUpdatesEnabled(True)
@@ -201,26 +236,34 @@ class ModActions:
         _s    = AppSettings.instance()
         paths = []
         if _s.data_root:
-            paths.append(str(mods_dir(Path(_s.data_root))))
+            paths.append(
+                str(mods_dir(Path(_s.data_root))))
         if _s.steam_workshop_path:
             paths.append(_s.steam_workshop_path)
         self.all_mods = self.rw.get_installed_mods(
             extra_mod_paths=paths,
             force_rescan=True,
             max_age_seconds=0)
+        self.names = {
+            pid: info.name
+            for pid, info in self.all_mods.items()
+        }
         sorted_ids = auto_sort_mods(ids, self.rw)
         self.active.clear()
         self._batch_load_active(sorted_ids)
         self._update()
 
     def _vanilla(self):
-        if QMessageBox.question(self, "Vanilla",
-                                "Reset to Core + DLCs only?"
-                                ) != QMessageBox.StandardButton.Yes:
+        if (QMessageBox.question(
+                self, "Vanilla",
+                "Reset to Core + DLCs only?")
+                != QMessageBox.StandardButton.Yes):
             return
         self._rem_all()
-        for mid in get_vanilla_modlist(self.rw.get_detected_dlcs()):
-            if mid in set(self.active.get_ids()):
+        active_set = set(self.active.get_ids())
+        for mid in get_vanilla_modlist(
+                self.rw.get_detected_dlcs()):
+            if mid in active_set:
                 continue
             self._mk_active(mid)
             # pylint: disable=protected-access
@@ -234,12 +277,14 @@ class ModActions:
 
     def _import_file(self):
         p, _ = QFileDialog.getOpenFileName(
-            self, "Import", "", "Text (*.txt);;XML (*.xml)")
+            self, "Import", "",
+            "Text (*.txt);;XML (*.xml)")
         if not p:
             return
-        mods = (read_mods_config(Path(p).parent)[0]
-                if p.endswith('.xml')
-                else parse_rimsort_modlist(p))
+        mods = (
+            read_mods_config(Path(p).parent)[0]
+            if p.endswith('.xml')
+            else parse_rimsort_modlist(p))
         if not mods:
             return
         self._rem_all()
@@ -259,8 +304,11 @@ class ModActions:
 
     def _export(self):
         p, _ = QFileDialog.getSaveFileName(
-            self, "Export", "modlist.txt", "Text (*.txt)")
+            self, "Export", "modlist.txt",
+            "Text (*.txt)")
         if p:
-            export_rimsort_modlist(p, self.active.get_ids(), self.names)
+            export_rimsort_modlist(
+                p, self.active.get_ids(),
+                self.names)
 
     # pylint: enable=no-member,attribute-defined-outside-init

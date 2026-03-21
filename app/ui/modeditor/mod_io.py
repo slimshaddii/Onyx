@@ -13,9 +13,12 @@ from app.ui.modeditor.issue_checker import get_badges
 from app.utils.file_utils import backup_folder
 
 
+# ── ModIO Mixin ───────────────────────────────────────────────────────────────
+
 class ModIO:
     """
     Mixin for ModEditorDialog.
+
     Requires: self.active, self.inst, self.rw, self.all_mods,
               self._avail_ids(), self._ignored_deps_set(),
               self._ignored_errors_set(),
@@ -25,7 +28,8 @@ class ModIO:
     # pylint: disable=no-member
 
     def _mods_changed_from_original(self) -> bool:
-        return set(self.active.get_ids()) != self._original_mods
+        return (set(self.active.get_ids())
+                != self._original_mods)
 
     def _backup_saves_if_needed(self):
         if not self.inst.has_saves:
@@ -37,20 +41,28 @@ class ModIO:
 
         def _do_backup():
             try:
-                backup_folder(saves_dir, backup_root, max_backups=3)
+                backup_folder(
+                    saves_dir, backup_root,
+                    max_backups=3)
             except Exception:  # pylint: disable=broad-exception-caught
-                # Background backup must never crash the UI thread.
+                # Background backup must never
+                # crash the UI thread.
                 pass
 
-        threading.Thread(target=_do_backup, daemon=True).start()
+        threading.Thread(
+            target=_do_backup, daemon=True
+        ).start()
 
     def _save(self):
         active_ids = self.active.get_ids()
-        if not any(m.lower() == 'ludeon.rimworld' for m in active_ids):
+        if not any(m.lower() == 'ludeon.rimworld'
+                   for m in active_ids):
             active_ids.insert(0, 'ludeon.rimworld')
 
         active_set     = set(active_ids)
-        _pos           = {m: i for i, m in enumerate(active_ids)}
+        _pos           = {
+            m: i for i, m in enumerate(active_ids)
+        }
         ignored_deps   = self._ignored_deps_set()
         ignored_errors = self._ignored_errors_set()
 
@@ -61,31 +73,51 @@ class ModIO:
                     self.inst.rimworld_version or '',
                     active_ids, _pos,
                     ignored_deps, ignored_errors):
-                if badge[2] == 'error' and 'ncompatible' in badge[3]:
-                    name = (self.all_mods[mid].name
-                            if mid in self.all_mods else mid)
-                    incompat_errors.append(f"  - {name}: {badge[3]}")
+                if (badge[2] == 'error'
+                        and 'ncompatible'
+                        in badge[3]):
+                    name = (
+                        self.all_mods[mid].name
+                        if mid in self.all_mods
+                        else mid)
+                    incompat_errors.append(
+                        f"  - {name}: {badge[3]}")
 
         if incompat_errors:
-            msg = (f"Cannot save: {len(incompat_errors)} incompatible mod(s).\n\n"
-                   + "\n".join(incompat_errors[:5]))
+            msg = (
+                f"Cannot save: "
+                f"{len(incompat_errors)} "
+                f"incompatible mod(s).\n\n"
+                + "\n".join(
+                    incompat_errors[:5]))
             if len(incompat_errors) > 5:
-                msg += f"\n  ... and {len(incompat_errors) - 5} more"
-            msg += "\n\nRemove incompatible mods or add them to the ignore list."
-            QMessageBox.critical(self, "Cannot Save", msg)
+                msg += (
+                    f"\n  ... and "
+                    f"{len(incompat_errors) - 5}"
+                    f" more")
+            msg += (
+                "\n\nRemove incompatible mods or "
+                "add them to the ignore list.")
+            QMessageBox.critical(
+                self, "Cannot Save", msg)
             return
 
         self._backup_saves_if_needed()
 
-        inactive_ids = [mid for mid in self._avail_ids()
-                        if mid not in VANILLA_AND_DLCS]
-        exp          = [m for m in active_ids
-                        if m in VANILLA_AND_DLCS
-                        and m != 'ludeon.rimworld']
+        inactive_ids = [
+            mid for mid in self._avail_ids()
+            if mid not in VANILLA_AND_DLCS
+        ]
+        exp = [
+            m for m in active_ids
+            if m in VANILLA_AND_DLCS
+            and m != 'ludeon.rimworld'
+        ]
 
         write_mods_config(
             self.inst.config_dir, active_ids,
-            self.inst.rimworld_version or '1.6.4630 rev467',
+            self.inst.rimworld_version
+            or '1.6.4630 rev467',
             exp or None)
 
         self.inst.mods            = active_ids
@@ -94,15 +126,18 @@ class ModIO:
         self.inst.save()
 
         try:
-            ModHistory(self.inst.path).record(active_ids, 'Auto-save')
+            ModHistory(self.inst.path).record(
+                active_ids, 'Auto-save')
         except Exception:  # pylint: disable=broad-exception-caught
-            # Non-critical history tracking must not block saving.
+            # Non-critical history tracking must
+            # not block saving.
             pass
 
         self.accept()
         self._sync_mods_async(active_ids)
 
-    def _sync_mods_async(self, active_ids: list[str]):
+    def _sync_mods_async(
+            self, active_ids: list[str]):
         _s  = AppSettings.instance()
         dr  = _s.data_root
         exe = _s.rimworld_exe
@@ -116,12 +151,16 @@ class ModIO:
 
         def _do_sync():
             try:
-                sync_instance_mods(active_ids, all_mods,
-                                   game_mods, onyx_mods)
+                sync_instance_mods(
+                    active_ids, all_mods,
+                    game_mods, onyx_mods)
             except Exception:  # pylint: disable=broad-exception-caught
-                # Background sync must never crash the UI thread.
+                # Background sync must never
+                # crash the UI thread.
                 pass
 
-        threading.Thread(target=_do_sync, daemon=True).start()
+        threading.Thread(
+            target=_do_sync, daemon=True
+        ).start()
 
     # pylint: enable=no-member

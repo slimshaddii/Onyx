@@ -9,6 +9,9 @@ from typing import Optional
 
 from app.utils.xml_utils import parse_xml_safe, get_text, get_list
 
+
+# ── Module-Level Constants ────────────────────────────────────────────────────
+
 _ABOUT_XML_CANDIDATES = [
     'About/About.xml',
     'About/about.xml',
@@ -17,7 +20,9 @@ _ABOUT_XML_CANDIDATES = [
     'About.xml',
 ]
 
-_PREVIEW_NAMES = ['Preview.png', 'preview.png', 'Preview.jpg', 'preview.jpg']
+_PREVIEW_NAMES = [
+    'Preview.png', 'preview.png', 'Preview.jpg', 'preview.jpg',
+]
 _WORKSHOP_ID_NAMES = ['PublishedFileId.txt', 'publishedfileid.txt']
 
 _KNOWN_DLCS = [
@@ -28,6 +33,8 @@ _KNOWN_DLCS = [
     'ludeon.rimworld.odyssey',
 ]
 
+
+# ── ModInfo ───────────────────────────────────────────────────────────────────
 
 @dataclass
 class ModInfo:
@@ -46,7 +53,8 @@ class ModInfo:
     supported_versions:  list[str]      = field(default_factory=list)
     forced_dependencies: list[str]      = field(default_factory=list)
     dependencies:        list[str]      = field(default_factory=list)
-    dep_alternatives:    dict[str, list[str]] = field(default_factory=dict)
+    dep_alternatives:    dict[str, list[str]] = field(
+                                             default_factory=dict)
     load_after:          list[str]      = field(default_factory=list)
     load_before:         list[str]      = field(default_factory=list)
     incompatible_with:   list[str]      = field(default_factory=list)
@@ -58,9 +66,11 @@ class ModInfo:
 
     @classmethod
     def from_path(cls, mod_path: Path, source: str = 'local',
-                  game_version: str = '1.6') -> Optional['ModInfo']:
+                  game_version: str = '1.6'
+                  ) -> Optional['ModInfo']:
         """
-        Parse About.xml from mod_path and return a ModInfo, or None if absent/invalid.
+        Parse About.xml from mod_path and return a ModInfo,
+        or None if absent/invalid.
         """
         about_xml = _find_about_xml(mod_path)
         if about_xml is None:
@@ -70,46 +80,59 @@ class ModInfo:
         if root is None:
             return None
 
-        package_id  = get_text(root, 'packageId', mod_path.name).lower().strip()
+        package_id = get_text(
+            root, 'packageId', mod_path.name).lower().strip()
         name        = get_text(root, 'name', mod_path.name)
         author      = get_text(root, 'author', 'Unknown')
         description = get_text(root, 'description', '')
         versions    = get_list(root, 'supportedVersions')
 
         parts         = game_version.split('.')
-        major_version = f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else game_version
+        major_version = (f"{parts[0]}.{parts[1]}"
+                         if len(parts) >= 2 else game_version)
 
         dep_alternatives: dict[str, set[str]] = {}
 
         forced_deps = _parse_li_block(
-            root.find('modDependenciesForced'), dep_alternatives)
+            root.find('modDependenciesForced'),
+            dep_alternatives)
 
         deps_by_version = _pick_version_block(
-            root.find('modDependenciesByVersion'), game_version, major_version,
-            text_only=False)
-        base_deps = (set() if deps_by_version
-                     else _parse_li_block(
-                         root.find('modDependencies'), dep_alternatives))
-        resolved_deps = deps_by_version | base_deps
+            root.find('modDependenciesByVersion'),
+            game_version, major_version,
+            text_only=False,
+            dep_alternatives=dep_alternatives)
+        base_deps = (
+            set() if deps_by_version
+            else _parse_li_block(
+                root.find('modDependencies'),
+                dep_alternatives))
+        resolved_deps = (
+            forced_deps | deps_by_version | base_deps)
 
         load_after_by_ver = _pick_version_block(
-            root.find('loadAfterByVersion'), game_version, major_version,
-            text_only=True)
-        load_after = (load_after_by_ver if load_after_by_ver
-                      else {x.lower().strip() for x in get_list(root, 'loadAfter')})
+            root.find('loadAfterByVersion'),
+            game_version, major_version, text_only=True)
+        load_after = (
+            load_after_by_ver if load_after_by_ver
+            else {x.lower().strip()
+                  for x in get_list(root, 'loadAfter')})
 
         load_before_by_ver = _pick_version_block(
-            root.find('loadBeforeByVersion'), game_version, major_version,
-            text_only=True)
-        load_before = (load_before_by_ver if load_before_by_ver
-                       else {x.lower().strip() for x in get_list(root, 'loadBefore')})
+            root.find('loadBeforeByVersion'),
+            game_version, major_version, text_only=True)
+        load_before = (
+            load_before_by_ver if load_before_by_ver
+            else {x.lower().strip()
+                  for x in get_list(root, 'loadBefore')})
 
         incompat_by_ver = _pick_version_block(
-            root.find('incompatibleWithByVersion'), game_version, major_version,
-            text_only=True)
-        incompatible = (incompat_by_ver if incompat_by_ver
-                        else {x.lower().strip()
-                              for x in get_list(root, 'incompatibleWith')})
+            root.find('incompatibleWithByVersion'),
+            game_version, major_version, text_only=True)
+        incompatible = (
+            incompat_by_ver if incompat_by_ver
+            else {x.lower().strip()
+                  for x in get_list(root, 'incompatibleWith')})
 
         return cls(
             package_id=package_id,
@@ -120,17 +143,23 @@ class ModInfo:
             supported_versions=versions,
             forced_dependencies=sorted(forced_deps),
             dependencies=sorted(resolved_deps),
-            dep_alternatives={k: sorted(v) for k, v in dep_alternatives.items()},
+            dep_alternatives={
+                k: sorted(v)
+                for k, v in dep_alternatives.items()
+            },
             load_after=sorted(load_after),
             load_before=sorted(load_before),
             incompatible_with=sorted(incompatible),
             load_first='ludeon.rimworld' in load_before,
             load_last=False,
             source=source,
-            workshop_id=_read_workshop_id(about_xml, mod_path),
+            workshop_id=_read_workshop_id(
+                about_xml, mod_path),
             preview_image=_find_preview(about_xml),
         )
 
+
+# ── RimWorldDetector ──────────────────────────────────────────────────────────
 
 class RimWorldDetector:
     """
@@ -142,12 +171,13 @@ class RimWorldDetector:
     """
 
     def __init__(self, game_path: Optional[str] = None):
-        self.game_path    = Path(game_path) if game_path else None
-        self.exe_path:    Optional[Path] = None
-        self.version:     str            = ''
-        self._mods_cache: dict[str, ModInfo] = {}
-        self._extra_paths: list[str]     = []
-        self._cache_time: float          = 0.0
+        self.game_path     = (Path(game_path)
+                              if game_path else None)
+        self.exe_path:     Optional[Path] = None
+        self.version:      str            = ''
+        self._mods_cache:  dict[str, ModInfo] = {}
+        self._extra_paths: list[str]      = []
+        self._cache_time:  float          = 0.0
 
         if self.game_path:
             self._detect_exe()
@@ -157,7 +187,9 @@ class RimWorldDetector:
         """Find the RimWorld executable inside game_path."""
         if not self.game_path:
             return
-        for name in ('RimWorldWin64.exe', 'RimWorldWin.exe', 'RimWorld.exe'):
+        for name in ('RimWorldWin64.exe',
+                     'RimWorldWin.exe',
+                     'RimWorld.exe'):
             c = self.game_path / name
             if c.exists():
                 self.exe_path = c
@@ -175,7 +207,7 @@ class RimWorldDetector:
                 pass
 
     def set_game_path(self, path: str) -> None:
-        """Update the game path, re-detect exe and version, and clear the mod cache."""
+        """Update game path, re-detect exe/version, clear cache."""
         self.game_path = Path(path)
         self._detect_exe()
         self._detect_version()
@@ -183,24 +215,34 @@ class RimWorldDetector:
         self._cache_time = 0.0
 
     def get_game_version_short(self) -> str:
-        """Return the game version as 'major.minor', defaulting to '1.6'."""
+        """Return game version as 'major.minor', default '1.6'."""
         if self.version:
             parts = self.version.split('.')
             if len(parts) >= 2:
                 return f"{parts[0]}.{parts[1]}"
         return '1.6'
 
-    def get_installed_mods(self, extra_mod_paths: Optional[list[str]] = None,
-                           force_rescan: bool = False,
-                           max_age_seconds: float = 30.0) -> dict[str, ModInfo]:
+    def get_installed_mods(
+            self,
+            extra_mod_paths: Optional[list[str]] = None,
+            force_rescan: bool = False,
+            max_age_seconds: float = 30.0,
+    ) -> dict[str, ModInfo]:
         """
         Return all installed mods, using the cache where valid.
 
-        extra_mod_paths, when provided, replaces the stored extra path list.
-        force_rescan bypasses the cache unless max_age_seconds has not elapsed.
+        extra_mod_paths, when provided, replaces the stored extra
+        path list.  If the new list differs from the stored one the
+        cache is invalidated so the next return reflects the change.
+        force_rescan bypasses the cache unless max_age_seconds has
+        not elapsed.
         """
         if extra_mod_paths is not None:
-            self._extra_paths = list(extra_mod_paths)
+            new_paths = list(extra_mod_paths)
+            if new_paths != self._extra_paths:
+                self._extra_paths = new_paths
+                self._mods_cache.clear()
+                self._cache_time = 0.0
 
         now       = time.monotonic()
         cache_age = now - self._cache_time
@@ -218,32 +260,42 @@ class RimWorldDetector:
         game_ver = self.get_game_version_short()
 
         if self.game_path:
-            _scan_mod_dir(self.game_path / 'Data', 'dlc', game_ver, mods, scanned)
-            _scan_mod_dir(self.game_path / 'Mods', 'local', game_ver, mods, scanned)
+            _scan_mod_dir(
+                self.game_path / 'Data', 'dlc',
+                game_ver, mods, scanned)
+            _scan_mod_dir(
+                self.game_path / 'Mods', 'local',
+                game_ver, mods, scanned)
 
         for ep in self._extra_paths:
             p = Path(ep)
             if p.exists():
                 ep_lower = str(p).lower()
-                source   = ('workshop'
-                            if ('workshop' in ep_lower or 'onyx' in ep_lower)
-                            else 'local')
-                _scan_mod_dir(p, source, game_ver, mods, scanned)
+                source = (
+                    'workshop'
+                    if ('workshop' in ep_lower
+                        or 'onyx' in ep_lower)
+                    else 'local')
+                _scan_mod_dir(
+                    p, source, game_ver, mods, scanned)
 
         self._mods_cache = mods
         self._cache_time = time.monotonic()
         return mods
 
     def get_detected_dlcs(self) -> list[str]:
-        """Return DLC package IDs that are present in the installed mods."""
+        """Return DLC package IDs present in installed mods."""
         mods = self.get_installed_mods()
         return [d for d in _KNOWN_DLCS if d in mods]
 
-    def find_missing_mods(self, mod_ids: list[str]) -> list[str]:
-        """Return package IDs from mod_ids that are not installed."""
+    def find_missing_mods(
+            self, mod_ids: list[str]) -> list[str]:
+        """Return package IDs from mod_ids not installed."""
         installed = self.get_installed_mods()
         return [m for m in mod_ids if m not in installed]
 
+
+# ── XML Helpers ───────────────────────────────────────────────────────────────
 
 def _find_about_xml(mod_path: Path) -> Optional[Path]:
     for rel in _ABOUT_XML_CANDIDATES:
@@ -253,12 +305,32 @@ def _find_about_xml(mod_path: Path) -> Optional[Path]:
     return None
 
 
-def _parse_li_block(parent_elem,
-                    dep_alternatives: dict[str, set[str]]) -> set[str]:
-    """
-    Extract lowercased packageId values from <li> children of parent_elem.
+def _collect_li_alternatives(
+        li_elem,
+        pid_lower: str,
+        dep_alternatives: dict[str, set[str]],
+) -> None:
+    """Extract alternativePackageIds from a single <li>."""
+    alt_elem = li_elem.find('alternativePackageIds')
+    if alt_elem is None:
+        return
+    alts: set[str] = set()
+    for alt_li in alt_elem.findall('li'):
+        if alt_li.text:
+            alts.add(alt_li.text.lower().strip())
+    if alts:
+        dep_alternatives[pid_lower] = alts
 
-    Also populates dep_alternatives for any <alternativePackageIds> found.
+
+def _parse_li_block(
+        parent_elem,
+        dep_alternatives: dict[str, set[str]],
+) -> set[str]:
+    """
+    Extract lowercased packageId values from <li> children.
+
+    Also populates dep_alternatives for any
+    <alternativePackageIds> found.
     Returns an empty set if parent_elem is None.
     """
     result: set[str] = set()
@@ -269,24 +341,28 @@ def _parse_li_block(parent_elem,
         if pid:
             pid_l = pid.lower().strip()
             result.add(pid_l)
-            alt_elem = li.find('alternativePackageIds')
-            if alt_elem is not None:
-                alts: set[str] = set()
-                for alt_li in alt_elem.findall('li'):
-                    if alt_li.text:
-                        alts.add(alt_li.text.lower().strip())
-                if alts:
-                    dep_alternatives[pid_l] = alts
+            _collect_li_alternatives(
+                li, pid_l, dep_alternatives)
     return result
 
 
-def _pick_version_block(parent_elem, game_version: str, major_version: str,
-                         text_only: bool = False) -> set[str]:
+def _pick_version_block(
+        parent_elem,
+        game_version: str,
+        major_version: str,
+        text_only: bool = False,
+        dep_alternatives: dict[str, set[str]] | None = None,
+) -> set[str]:
     """
-    Return IDs from the best-matching version-tagged child block of parent_elem.
+    Return IDs from the best-matching version-tagged child block.
 
-    Priority: exact game version → major.minor → first major.* match.
-    Returns empty set if parent_elem is None or no block matches.
+    Priority: exact game version, then major.minor, then first
+    major.* match.  Returns empty set if parent_elem is None or
+    no block matches.
+
+    When text_only is False and dep_alternatives is provided,
+    alternativePackageIds are parsed from each <li> and stored
+    in the dict.
     """
     result: set[str] = set()
     if parent_elem is None:
@@ -296,24 +372,40 @@ def _pick_version_block(parent_elem, game_version: str, major_version: str,
         ver_elem = parent_elem.find(tag)
         if ver_elem is not None:
             for li in ver_elem.findall('li'):
-                val = li.text if text_only else get_text(li, 'packageId')
+                val = (li.text if text_only
+                       else get_text(li, 'packageId'))
                 if val:
-                    result.add(val.lower().strip())
+                    val_l = val.lower().strip()
+                    result.add(val_l)
+                    if (not text_only
+                            and dep_alternatives
+                            is not None):
+                        _collect_li_alternatives(
+                            li, val_l,
+                            dep_alternatives)
             return result
 
     major_num = major_version.split('.')[0]
     for child in parent_elem:
         if child.tag.lstrip('v').startswith(major_num):
             for li in child.findall('li'):
-                val = li.text if text_only else get_text(li, 'packageId')
+                val = (li.text if text_only
+                       else get_text(li, 'packageId'))
                 if val:
-                    result.add(val.lower().strip())
+                    val_l = val.lower().strip()
+                    result.add(val_l)
+                    if (not text_only
+                            and dep_alternatives
+                            is not None):
+                        _collect_li_alternatives(
+                            li, val_l,
+                            dep_alternatives)
             break
     return result
 
 
 def _find_preview(about_xml: Path) -> str:
-    """Return the path of the first preview image found, or ''."""
+    """Return path of the first preview image found, or ''."""
     for name in _PREVIEW_NAMES:
         pp = about_xml.parent / name
         if pp.exists():
@@ -321,10 +413,12 @@ def _find_preview(about_xml: Path) -> str:
     return ''
 
 
-def _read_workshop_id(about_xml: Path, mod_path: Path) -> str:
+def _read_workshop_id(
+        about_xml: Path, mod_path: Path) -> str:
     """
-    Return the workshop ID from PublishedFileId.txt, or mod_path.name if numeric.
-    Returns '' if neither is available.
+    Return the workshop ID from PublishedFileId.txt,
+    or mod_path.name if numeric.  Returns '' if neither
+    is available.
     """
     for name in _WORKSHOP_ID_NAMES:
         pid_file = about_xml.parent / name
@@ -339,13 +433,17 @@ def _read_workshop_id(about_xml: Path, mod_path: Path) -> str:
     return ''
 
 
-def _scan_mod_dir(dirpath: Path, source: str, game_ver: str,
-                   mods: dict[str, ModInfo], scanned: set[str]) -> None:
+def _scan_mod_dir(
+        dirpath: Path, source: str, game_ver: str,
+        mods: dict[str, ModInfo],
+        scanned: set[str]) -> None:
     """
-    Scan dirpath for mod subdirectories and add new ModInfo entries to mods.
+    Scan dirpath for mod subdirectories and add new ModInfo
+    entries to mods.
 
-    Deduplicates by resolved path to avoid scanning the same dir twice.
-    Silently skips directories that raise PermissionError.
+    Deduplicates by resolved path to avoid scanning the same
+    dir twice.  Silently skips directories that raise
+    PermissionError.
     """
     resolved = str(dirpath.resolve())
     if not dirpath.exists() or resolved in scanned:
@@ -355,8 +453,9 @@ def _scan_mod_dir(dirpath: Path, source: str, game_ver: str,
         for mod_dir in dirpath.iterdir():
             if not mod_dir.is_dir():
                 continue
-            info = ModInfo.from_path(mod_dir, source=source,
-                                     game_version=game_ver)
+            info = ModInfo.from_path(
+                mod_dir, source=source,
+                game_version=game_ver)
             if info and info.package_id not in mods:
                 mods[info.package_id] = info
     except PermissionError:

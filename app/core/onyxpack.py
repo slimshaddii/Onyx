@@ -60,6 +60,8 @@ class OnyxPreview:
     error:          str           = ''
 
 
+# ── Export ────────────────────────────────────────────────────────────────
+
 def export_onyx(instance: Instance, output_path: Path,
                 all_mods: dict[str, ModInfo],
                 include_config: bool = False,
@@ -80,14 +82,20 @@ def export_onyx(instance: Instance, output_path: Path,
         }
 
         mods = (
-            [_build_mod_entry(mid, True,  all_mods) for mid in instance.mods] +
-            [_build_mod_entry(mid, False, all_mods) for mid in instance.inactive_mods]
+            [_build_mod_entry(mid, True, all_mods)
+             for mid in instance.mods] +
+            [_build_mod_entry(mid, False, all_mods)
+             for mid in instance.inactive_mods]
         )
 
-        with zipfile.ZipFile(str(output_path), 'w', zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr('manifest.json',   json.dumps(manifest,            indent=2))
-            zf.writestr('modlist.json',    json.dumps({'mods': mods},      indent=2))
-            zf.writestr('load_order.json', json.dumps(list(instance.mods), indent=2))
+        with zipfile.ZipFile(str(output_path), 'w',
+                             zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr('manifest.json',
+                        json.dumps(manifest, indent=2))
+            zf.writestr('modlist.json',
+                        json.dumps({'mods': mods}, indent=2))
+            zf.writestr('load_order.json',
+                        json.dumps(list(instance.mods), indent=2))
 
             if include_config and instance.config_dir.exists():
                 for cf in instance.config_dir.iterdir():
@@ -103,14 +111,18 @@ def export_onyx(instance: Instance, output_path: Path,
         total = len(instance.mods) + len(instance.inactive_mods)
         return (True,
                 f"Exported {total} mods "
-                f"({len(instance.mods)} active) to {output_path.name}")
+                f"({len(instance.mods)} active) to "
+                f"{output_path.name}")
     except (OSError, zipfile.BadZipFile) as exc:
         return False, f"Export failed: {exc}"
 
 
+# ── Peek / Preview ───────────────────────────────────────────────────────
+
 def peek_onyx(path: Path) -> OnyxPreview:
     """Read a .onyx file's metadata without full extraction."""
-    preview = OnyxPreview(manifest=OnyxManifest(), mods=[], load_order=[])
+    preview = OnyxPreview(
+        manifest=OnyxManifest(), mods=[], load_order=[])
 
     try:
         if not path.exists():
@@ -128,46 +140,32 @@ def peek_onyx(path: Path) -> OnyxPreview:
 
             if 'manifest.json' not in names:
                 preview.valid = False
-                preview.error = "Missing manifest.json — not a valid .onyx pack"
+                preview.error = (
+                    "Missing manifest.json — not a valid .onyx pack")
                 return preview
 
             md = json.loads(zf.read('manifest.json'))
+            if not isinstance(md, dict):
+                preview.valid = False
+                preview.error = "Invalid manifest.json — expected object"
+                return preview
 
             if md.get('magic') != ONYX_MAGIC:
                 preview.valid = False
                 preview.error = (
-                    f"Unknown or missing magic: '{md.get('magic', '<none>')}'"
+                    f"Unknown or missing magic: "
+                    f"'{md.get('magic', '<none>')}'"
                     f" (expected '{ONYX_MAGIC}')")
                 return preview
 
-            preview.manifest = OnyxManifest(
-                format_version=md.get('format_version', 0),
-                magic=md.get('magic', ''),
-                name=md.get('name', ''),
-                author=md.get('author', ''),
-                description=md.get('description', ''),
-                created=md.get('created', ''),
-                rimworld_version=md.get('rimworld_version', ''),
-                mod_count=md.get('mod_count', 0),
-                onyx_version=md.get('onyx_version', ''),
-            )
+            preview.manifest = _parse_manifest(md)
+            _parse_modlist(zf, names, preview)
+            _parse_load_order(zf, names, preview)
 
-            if 'modlist.json' in names:
-                ml = json.loads(zf.read('modlist.json'))
-                for m in ml.get('mods', []):
-                    preview.mods.append(OnyxMod(
-                        id=m.get('id', ''),
-                        name=m.get('name', ''),
-                        workshop_id=m.get('workshop_id', ''),
-                        source=m.get('source', ''),
-                        required=m.get('required', True),
-                    ))
-
-            if 'load_order.json' in names:
-                preview.load_order = json.loads(zf.read('load_order.json'))
-
-            preview.has_config = any(n.startswith('config/') for n in names)
-            preview.has_icon   = any(n.startswith('icon.')   for n in names)
+            preview.has_config = any(
+                n.startswith('config/') for n in names)
+            preview.has_icon = any(
+                n.startswith('icon.') for n in names)
 
     except json.JSONDecodeError as exc:
         preview.valid = False
@@ -176,11 +174,59 @@ def peek_onyx(path: Path) -> OnyxPreview:
         preview.valid = False
         preview.error = "Corrupted .onyx file"
     except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Catch-all for corrupt or unexpected pack contents.
         preview.valid = False
         preview.error = f"Error reading pack: {exc}"
 
     return preview
 
+
+def _parse_manifest(md: dict) -> OnyxManifest:
+    """Build an OnyxManifest from a validated manifest dict."""
+    return OnyxManifest(
+        format_version=md.get('format_version', 0),
+        magic=md.get('magic', ''),
+        name=md.get('name', ''),
+        author=md.get('author', ''),
+        description=md.get('description', ''),
+        created=md.get('created', ''),
+        rimworld_version=md.get('rimworld_version', ''),
+        mod_count=md.get('mod_count', 0),
+        onyx_version=md.get('onyx_version', ''),
+    )
+
+
+def _parse_modlist(zf: zipfile.ZipFile, names: list[str],
+                   preview: OnyxPreview) -> None:
+    """Parse modlist.json from the ZIP if present."""
+    if 'modlist.json' not in names:
+        return
+    ml = json.loads(zf.read('modlist.json'))
+    if not isinstance(ml, dict):
+        return
+    for m in ml.get('mods', []):
+        if not isinstance(m, dict):
+            continue
+        preview.mods.append(OnyxMod(
+            id=m.get('id', ''),
+            name=m.get('name', ''),
+            workshop_id=m.get('workshop_id', ''),
+            source=m.get('source', ''),
+            required=m.get('required', True),
+        ))
+
+
+def _parse_load_order(zf: zipfile.ZipFile, names: list[str],
+                      preview: OnyxPreview) -> None:
+    """Parse load_order.json from the ZIP if present."""
+    if 'load_order.json' not in names:
+        return
+    lo = json.loads(zf.read('load_order.json'))
+    if isinstance(lo, list):
+        preview.load_order = lo
+
+
+# ── Check / Import ───────────────────────────────────────────────────────
 
 def check_onyx_mods(preview: OnyxPreview,
                     installed_mods: dict[str, ModInfo]) -> OnyxPreview:
@@ -220,7 +266,8 @@ def import_onyx(onyx_path: Path,
 
         notes = "\n".join(filter(None, [
             f"Imported from: {onyx_path.name}",
-            f"Author: {preview.manifest.author}" if preview.manifest.author else '',
+            (f"Author: {preview.manifest.author}"
+             if preview.manifest.author else ''),
             preview.manifest.description,
         ]))
 
@@ -244,8 +291,11 @@ def import_onyx(onyx_path: Path,
     except FileExistsError:
         return None, [], f"Instance '{instance_name}' already exists"
     except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Import must not propagate unexpected errors to caller.
         return None, [], f"Import failed: {exc}"
 
+
+# ── Helpers ───────────────────────────────────────────────────────────────
 
 def _build_mod_entry(mid: str, required: bool,
                      all_mods: dict[str, ModInfo]) -> dict:
@@ -261,16 +311,18 @@ def _build_mod_entry(mid: str, required: bool,
 
 
 def _extract_zip_assets(onyx_path: Path, inst: Instance,
-                         preview: OnyxPreview,
-                         install_config: bool) -> None:
-    """Extract config files and icon from the ZIP in a single open."""
-    if not (install_config and preview.has_config) and not preview.has_icon:
+                        preview: OnyxPreview,
+                        install_config: bool) -> None:
+    """Extract config files and icon from the ZIP."""
+    if (not (install_config and preview.has_config)
+            and not preview.has_icon):
         return
 
     with zipfile.ZipFile(str(onyx_path), 'r') as zf:
         if install_config and preview.has_config:
             for name in zf.namelist():
-                if name.startswith('config/') and len(name) > len('config/'):
+                if (name.startswith('config/')
+                        and len(name) > len('config/')):
                     filename = name[len('config/'):]
                     target   = inst.config_dir / filename
                     target.parent.mkdir(parents=True, exist_ok=True)

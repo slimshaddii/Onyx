@@ -13,34 +13,42 @@ import zipfile
 import subprocess
 from pathlib import Path
 
+try:
+    from PIL import Image as _PIL_Image  # pylint: disable=import-outside-toplevel
+    _PIL_AVAILABLE = True
+except ImportError:
+    _PIL_AVAILABLE = False
 
-import subprocess
+
 def _get_version() -> str:
+    """Return a versioned app name derived from the latest git tag."""
     try:
         tag = subprocess.check_output(
             ['git', 'describe', '--tags', '--abbrev=0'],
             stderr=subprocess.DEVNULL).decode().strip()
         return f"OnyxLauncher-{tag}"
-    except Exception:
+    except subprocess.SubprocessError:
         return "OnyxLauncher-Beta"
+
 
 APP_NAME = _get_version()
 
-DIST_DIR    = Path("dist")
-BUILD_DIR   = Path("build")
-SPEC_FILE   = "main.spec"
-OUTPUT_DIR  = DIST_DIR / APP_NAME
+DIST_DIR   = Path("dist")
+BUILD_DIR  = Path("build")
+SPEC_FILE  = "main.spec"
+OUTPUT_DIR = DIST_DIR / APP_NAME
 
 
-def clean():
-    print("[Build] Cleaning previous build…")
+def clean() -> None:
+    """Remove previous build and dist directories."""
+    print("[Build] Cleaning previous build...")
     for d in (DIST_DIR, BUILD_DIR):
         if d.exists():
             shutil.rmtree(d)
             print(f"  Removed {d}/")
 
 
-def convert_icon():
+def convert_icon() -> None:
     """Convert onyx_icon.png to .ico if needed (Windows only)."""
     if sys.platform != 'win32':
         return
@@ -52,22 +60,24 @@ def convert_icon():
     if not png.exists():
         print("[Build] WARNING: No icon found at app/ui/resources/onyx_icon.png")
         return
-    try:
-        from PIL import Image
-        img = Image.open(png)
-        img.save(str(ico), format='ICO',
-                 sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])
-        print(f"[Build] Converted {png} → {ico}")
-    except ImportError:
-        print("[Build] WARNING: Pillow not installed — "
+    if not _PIL_AVAILABLE:
+        print("[Build] WARNING: Pillow not installed -- "
               "cannot auto-convert icon. "
               "Install with: pip install Pillow")
-    except Exception as e:
+        return
+    try:
+        img = _PIL_Image.open(png)
+        img.save(str(ico), format='ICO',
+                 sizes=[(16, 16), (32, 32), (48, 48),
+                        (64, 64), (128, 128), (256, 256)])
+        print(f"[Build] Converted {png} -> {ico}")
+    except OSError as e:
         print(f"[Build] WARNING: Icon conversion failed: {e}")
 
 
-def build():
-    print(f"[Build] Building {APP_NAME} for {sys.platform}…")
+def build() -> None:
+    """Run PyInstaller to produce the distributable folder."""
+    print(f"[Build] Building {APP_NAME} for {sys.platform}...")
     result = subprocess.run(
         [sys.executable, '-m', 'PyInstaller',
          '--noconfirm',
@@ -79,18 +89,14 @@ def build():
     print("[Build] PyInstaller done.")
 
 
-def verify():
+def verify() -> None:
+    """Confirm that the expected executable was produced."""
     if not OUTPUT_DIR.exists():
         print(f"[Build] ERROR: Expected output not found: {OUTPUT_DIR}")
         sys.exit(1)
 
-    # Check executable exists
-    if sys.platform == 'win32':
-        exe = OUTPUT_DIR / 'OnyxLauncher.exe'
-    elif sys.platform == 'darwin':
-        exe = OUTPUT_DIR / 'OnyxLauncher'
-    else:
-        exe = OUTPUT_DIR / 'OnyxLauncher'
+    exe_name = 'OnyxLauncher.exe' if sys.platform == 'win32' else 'OnyxLauncher'
+    exe = OUTPUT_DIR / exe_name
 
     if not exe.exists():
         print(f"[Build] ERROR: Executable not found: {exe}")
@@ -99,18 +105,16 @@ def verify():
     print(f"[Build] Verified: {exe}")
 
 
-def make_zip():
-    # Name zip with platform suffix
-    if sys.platform == 'win32':
-        platform_tag = 'windows'
-    elif sys.platform == 'darwin':
-        platform_tag = 'macos'
-    else:
-        platform_tag = 'linux'
-
+def make_zip() -> Path:
+    """Zip the output directory with a platform suffix and return the zip path."""
+    platform_map = {
+        'win32':  'windows',
+        'darwin': 'macos',
+    }
+    platform_tag = platform_map.get(sys.platform, 'linux')
     zip_name = DIST_DIR / f"{APP_NAME}-{platform_tag}.zip"
 
-    print(f"[Build] Creating {zip_name}…")
+    print(f"[Build] Creating {zip_name}...")
     with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED,
                          compresslevel=6) as zf:
         for file in OUTPUT_DIR.rglob('*'):
@@ -123,8 +127,9 @@ def make_zip():
     return zip_name
 
 
-def main():
-    args = sys.argv[1:]
+def main() -> None:
+    """Entry point -- parse args and run the build pipeline."""
+    args      = sys.argv[1:]
     do_clean  = '--clean'  in args
     do_zip    = '--no-zip' not in args
 
@@ -137,9 +142,9 @@ def main():
 
     if do_zip:
         zip_path = make_zip()
-        print(f"\n[Build] Done — distribute: {zip_path}")
+        print(f"\n[Build] Done -- distribute: {zip_path}")
     else:
-        print(f"\n[Build] Done — folder: {OUTPUT_DIR}")
+        print(f"\n[Build] Done -- folder: {OUTPUT_DIR}")
 
 
 if __name__ == '__main__':

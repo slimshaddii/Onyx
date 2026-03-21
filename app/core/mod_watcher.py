@@ -83,4 +83,3 @@ class ModWatcher(QObject):
 
     def _on_dir_changed(self, _path: str) -> None:
         self._debounce.start()
-        

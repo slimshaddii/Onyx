@@ -1,6 +1,6 @@
 # Onyx Launcher
 
-A mod manager and instance launcher for RimWorld. Provides true per-instance isolation for mods, saves, and configuration — allowing multiple modpack setups to coexist without conflict.
+A mod manager and instance launcher for RimWorld. Provides true per-instance isolation for mods, saves, and configuration. Allowing multiple modpack setups to coexist without conflict.
 
 Built with Python and PyQt6. Inspired by Prism Launcher.
 
@@ -25,7 +25,7 @@ Built with Python and PyQt6. Inspired by Prism Launcher.
 - Fully dynamic tier detection with no hardcoded mod lists
 - Dependency priority: `modDependenciesForced` > `ByVersion` > base (mutually exclusive)
 - `loadAfterByVersion` / `loadBeforeByVersion` / `incompatibleWithByVersion` support
-- `alternativePackageIds` support — alternatives satisfy dependencies
+- `alternativePackageIds` support -- alternatives satisfy dependencies
 - Framework detection: mods depended on by 2+ others are auto-promoted
 - Circular dependency detection with alphabetical fallback
 
@@ -95,11 +95,11 @@ Built with Python and PyQt6. Inspired by Prism Launcher.
 
 ### UI
 - Dark theme (default) and light theme with full theme-aware color tokens
-- `get_colors()` system used throughout — no hardcoded dark hex strings
+- `get_colors()` system used throughout -- no hardcoded dark hex strings
 - Keyboard shortcuts: Ctrl+S, Ctrl+Z, Ctrl+N, F5, Ctrl+R, Delete
 - Per-instance launch arguments with remember/skip dialog flag
 - QListView with custom delegate for large mod list performance
-- Lazy badge rendering — only visible rows are painted
+- Lazy badge rendering -- only visible rows are painted
 
 ---
 
@@ -220,7 +220,8 @@ data/           # App settings, conflict database, timestamp store
 | macOS | Supported | Tested via GitHub Actions |
 
 Non-Steam copies of RimWorld are fully supported via SteamCMD for mod downloads.
-Steam Deck is supported — Flatpak and native Steam paths are auto-detected.
+Steam Deck is supported -- Flatpak and native Steam paths are auto-detected.
+
 ---
 
 ## Contributing
@@ -245,4 +246,3 @@ MIT License. See [LICENSE](LICENSE) for details.
 - [RimSort](https://github.com/RimSort/RimSort) for sorting algorithm reference
 - [Prism Launcher](https://prismlauncher.org/) for UI design inspiration
 - JuMLi for the community conflict and performance database
-```

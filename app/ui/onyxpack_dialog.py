@@ -20,18 +20,36 @@ from app.core.onyxpack import (
 from app.core.rimworld import RimWorldDetector
 
 
+def _extra_mod_paths() -> list[str]:
+    """Collect extra mod scan paths from settings."""
+    s = AppSettings.instance()
+    paths: list[str] = []
+    if s.steam_workshop_path:
+        paths.append(s.steam_workshop_path)
+    dr = s.data_root
+    if dr:
+        onyx_dir = str(Path(dr) / 'onyx_mods')
+        paths.append(onyx_dir)
+    return paths
+
+
 class OnyxExportDialog(QDialog):
     """Dialog for exporting an instance as an .onyx modpack file."""
 
-    def __init__(self, parent, instance: Instance, rw: RimWorldDetector):
+    def __init__(self, parent, instance: Instance,
+                 rw: RimWorldDetector):
         super().__init__(parent)
         self.inst = instance
         self.rw   = rw
+        self.author_input: QLineEdit | None = None
+        self.desc_input:   QTextEdit | None  = None
+        self.config_cb:    QCheckBox | None  = None
         self.setWindowTitle(f"Export .onyx — {instance.name}")
         self.setMinimumWidth(480)
         self._build()
 
     def _build(self):
+        """Build the export dialog UI."""
         lo = QVBoxLayout(self)
         lo.setSpacing(8)
 
@@ -78,6 +96,7 @@ class OnyxExportDialog(QDialog):
         lo.addLayout(btns)
 
     def _export(self):
+        """Run the export and report result."""
         path, _ = QFileDialog.getSaveFileName(
             self, "Save .onyx",
             f"{self.inst.name}{ONYX_EXTENSION}",
@@ -87,8 +106,9 @@ class OnyxExportDialog(QDialog):
         if not path.endswith(ONYX_EXTENSION):
             path += ONYX_EXTENSION
 
-        all_mods = self.rw.get_installed_mods()
-        ok, msg  = export_onyx(
+        all_mods = self.rw.get_installed_mods(
+            extra_mod_paths=_extra_mod_paths())
+        ok, msg = export_onyx(
             self.inst, Path(path), all_mods,
             include_config=self.config_cb.isChecked(),
             author=self.author_input.text().strip(),
@@ -122,7 +142,17 @@ class OnyxImportDialog(QDialog):
         self._preview: OnyxPreview | None = None
 
         self.created_instance = None
-        self.missing_mods     = []
+        self.missing_mods: list     = []
+
+        self._info_labels: dict[str, QLabel] = {}
+        self.desc_label:    QLabel | None     = None
+        self.name_input:    QLineEdit | None  = None
+        self.status_label:  QLabel | None     = None
+        self.mod_list:      QListWidget | None = None
+        self.config_cb:     QCheckBox | None  = None
+        self.warning_label: QLabel | None     = None
+        self.error_label:   QLabel | None     = None
+        self.import_btn:    QPushButton | None = None
 
         self.setWindowTitle("Import .onyx — Onyx Launcher")
         self.setMinimumSize(560, 520)
@@ -130,15 +160,16 @@ class OnyxImportDialog(QDialog):
         self._load_preview()
 
     def _build(self):
+        """Build the import dialog UI."""
         lo = QVBoxLayout(self)
         lo.setSpacing(8)
 
         info = QGroupBox("Pack Info")
         grid = QGridLayout()
         grid.setVerticalSpacing(4)
-        self._info_labels: dict[str, QLabel] = {}
         for row, key in enumerate(
-                ('Name', 'Author', 'Version', 'Active', 'Inactive', 'Created')):
+                ('Name', 'Author', 'Version',
+                 'Active', 'Inactive', 'Created')):
             lbl = QLabel(f"{key}:")
             lbl.setStyleSheet("font-weight:bold;color:#8a8ea0;")
             val = QLabel("—")
@@ -150,7 +181,8 @@ class OnyxImportDialog(QDialog):
 
         self.desc_label = QLabel("")
         self.desc_label.setWordWrap(True)
-        self.desc_label.setStyleSheet("color:#aaa;font-size:11px;")
+        self.desc_label.setStyleSheet(
+            "color:#aaa;font-size:11px;")
         self.desc_label.setMaximumHeight(50)
         lo.addWidget(self.desc_label)
 
@@ -179,13 +211,15 @@ class OnyxImportDialog(QDialog):
         lo.addWidget(self.config_cb)
 
         self.warning_label = QLabel("")
-        self.warning_label.setStyleSheet("color:#ffaa00;font-weight:bold;")
+        self.warning_label.setStyleSheet(
+            "color:#ffaa00;font-weight:bold;")
         self.warning_label.setWordWrap(True)
         self.warning_label.hide()
         lo.addWidget(self.warning_label)
 
         self.error_label = QLabel("")
-        self.error_label.setStyleSheet("color:#ff4444;font-weight:bold;")
+        self.error_label.setStyleSheet(
+            "color:#ff4444;font-weight:bold;")
         self.error_label.setWordWrap(True)
         self.error_label.hide()
         lo.addWidget(self.error_label)
@@ -202,6 +236,7 @@ class OnyxImportDialog(QDialog):
         lo.addLayout(btns)
 
     def _load_preview(self):
+        """Load and display the .onyx pack preview."""
         preview = peek_onyx(self.onyx_path)
         if not preview.valid:
             self.error_label.setText(f"❌ {preview.error}")
@@ -209,17 +244,27 @@ class OnyxImportDialog(QDialog):
             self.import_btn.setEnabled(False)
             return
 
-        installed = self.rw.get_installed_mods()
+        installed = self.rw.get_installed_mods(
+            extra_mod_paths=_extra_mod_paths())
         preview   = check_onyx_mods(preview, installed)
         self._preview = preview
         m = preview.manifest
 
+        self._populate_info_labels(m, preview)
+        self._populate_mod_list(preview, set(installed.keys()))
+        self._populate_warnings(preview)
+
+    def _populate_info_labels(self, m, preview: OnyxPreview) -> None:
+        """Fill the info grid labels from manifest data."""
         self._info_labels['Name'].setText(
             f"<b>{m.name}</b>" if m.name else "—")
         self._info_labels['Author'].setText(m.author or "—")
-        self._info_labels['Version'].setText(m.rimworld_version or "—")
-        n_active   = sum(1 for mod in preview.mods if mod.required)
-        n_inactive = sum(1 for mod in preview.mods if not mod.required)
+        self._info_labels['Version'].setText(
+            m.rimworld_version or "—")
+
+        n_active = sum(1 for mod in preview.mods if mod.required)
+        n_inactive = sum(
+            1 for mod in preview.mods if not mod.required)
         self._info_labels['Active'].setText(str(n_active))
         self._info_labels['Inactive'].setText(str(n_inactive))
 
@@ -229,7 +274,8 @@ class OnyxImportDialog(QDialog):
                 self._info_labels['Created'].setText(
                     dt.strftime("%b %d, %Y %H:%M"))
             except ValueError:
-                self._info_labels['Created'].setText(m.created[:16])
+                self._info_labels['Created'].setText(
+                    m.created[:16])
 
         if m.description:
             self.desc_label.setText(m.description[:300])
@@ -239,11 +285,13 @@ class OnyxImportDialog(QDialog):
         if not preview.has_config:
             self.config_cb.setEnabled(False)
             self.config_cb.setChecked(False)
-            self.config_cb.setText("Import config files (not included in pack)")
+            self.config_cb.setText(
+                "Import config files (not included in pack)")
 
+    def _populate_mod_list(self, preview: OnyxPreview,
+                           installed_set: set[str]) -> None:
+        """Fill the mod QListWidget from preview data."""
         self.mod_list.clear()
-        installed_set = set(installed.keys())
-
         for mod in preview.mods:
             found  = mod.id in installed_set
             color  = '#81c784' if found else '#ff6b6b'
@@ -261,20 +309,28 @@ class OnyxImportDialog(QDialog):
 
             lbl = QLabel(text)
             lbl.setStyleSheet(
-                f"color:{color}; background:transparent; padding:2px 5px;")
+                f"color:{color}; background:transparent; "
+                f"padding:2px 5px;")
             if tooltip:
                 lbl.setToolTip(tooltip)
             self.mod_list.setItemWidget(it, lbl)
 
+    def _populate_warnings(self, preview: OnyxPreview) -> None:
+        """Show status counts and missing-mod warnings."""
         n_inst = len(preview.installed_mods)
         n_miss = len(preview.missing_mods)
         self.status_label.setText(
-            f"<span style='color:#81c784'>✅ {n_inst} installed</span>  "
-            f"<span style='color:#ff6b6b'>❌ {n_miss} missing</span>  "
-            f"<span style='color:#888'>({len(preview.mods)} total)</span>")
+            f"<span style='color:#81c784'>"
+            f"✅ {n_inst} installed</span>  "
+            f"<span style='color:#ff6b6b'>"
+            f"❌ {n_miss} missing</span>  "
+            f"<span style='color:#888'>"
+            f"({len(preview.mods)} total)</span>")
 
         if n_miss > 0:
-            ws_count = sum(1 for mod in preview.missing_mods if mod.workshop_id)
+            ws_count = sum(
+                1 for mod in preview.missing_mods
+                if mod.workshop_id)
             msg = f"⚠ {n_miss} mod(s) not installed."
             if ws_count:
                 msg += f" {ws_count} available on Workshop."
@@ -284,12 +340,15 @@ class OnyxImportDialog(QDialog):
             self.warning_label.show()
 
     def _do_import(self):
+        """Validate and run the import."""
         name = self.name_input.text().strip()
         if not name:
-            QMessageBox.warning(self, "Error", "Enter an instance name.")
+            QMessageBox.warning(
+                self, "Error", "Enter an instance name.")
             return
         if self.im.instance_exists(name):
-            QMessageBox.warning(self, "Error", f"'{name}' already exists.")
+            QMessageBox.warning(
+                self, "Error", f"'{name}' already exists.")
             return
 
         inst, missing, error = import_onyx(
@@ -305,38 +364,45 @@ class OnyxImportDialog(QDialog):
 
         lines = [f"✅ Created instance '{name}'"]
         if inst:
-            lines.append(f"  Active: {inst.mod_count} mods")
+            lines.append(
+                f"  Active: {inst.mod_count} mods")
             if inst.inactive_mods:
-                lines.append(f"  Inactive: {len(inst.inactive_mods)} mods")
+                lines.append(
+                    f"  Inactive: {len(inst.inactive_mods)} mods")
         if missing:
-            lines.append(f"\n⚠ {len(missing)} mod(s) not installed:")
+            lines.append(
+                f"\n⚠ {len(missing)} mod(s) not installed:")
             for mod in missing[:5]:
                 lines.append(f"  • {mod.name} [{mod.id}]")
             if len(missing) > 5:
-                lines.append(f"  … and {len(missing) - 5} more")
+                lines.append(
+                    f"  … and {len(missing) - 5} more")
 
-        downloadable = [mod for mod in missing if mod.workshop_id]
+        downloadable = [
+            mod for mod in missing if mod.workshop_id]
 
-        if downloadable and self.dl_queue and self.dl_queue.is_configured:
+        if (downloadable and self.dl_queue
+                and self.dl_queue.is_configured):
             lines.append(
-                f"\n{len(downloadable)} mod(s) can be downloaded from Workshop.")
+                f"\n{len(downloadable)} mod(s) can be "
+                f"downloaded from Workshop.")
             msg = '\n'.join(lines)
             reply = QMessageBox.question(
-                self, "Import Complete — Download Missing Mods?",
+                self, "Import Complete — Download Missing?",
                 msg + "\n\nDownload missing mods now?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                (QMessageBox.StandardButton.Yes
+                 | QMessageBox.StandardButton.No),
                 QMessageBox.StandardButton.Yes)
 
             if reply == QMessageBox.StandardButton.Yes:
                 self.accept()
                 self._queue_downloads(downloadable)
                 return
-
         else:
             if downloadable and not self.dl_queue:
                 lines.append(
-                    "\nTip: Configure SteamCMD in Settings to auto-download "
-                    "missing mods.")
+                    "\nTip: Configure SteamCMD in Settings "
+                    "to auto-download missing mods.")
             QMessageBox.information(
                 self, "Import Complete", '\n'.join(lines))
 
@@ -347,10 +413,12 @@ class OnyxImportDialog(QDialog):
         from app.ui.modeditor.download_manager import DownloadManagerWindow  # pylint: disable=import-outside-toplevel
 
         _s = AppSettings.instance()
-        if not _s.steamcmd_path or not Path(_s.steamcmd_path).exists():
+        if not _s.steamcmd_path or not Path(
+                _s.steamcmd_path).exists():
             QMessageBox.warning(
                 self, "SteamCMD Not Configured",
-                "Set the SteamCMD path in Settings to download mods.")
+                "Set the SteamCMD path in Settings to "
+                "download mods.")
             return
 
         pairs = [(mod.workshop_id, mod.name)
@@ -362,6 +430,7 @@ class OnyxImportDialog(QDialog):
         mgr.queue_and_show(pairs)
 
     def _on_downloads_complete(self, results: list):
+        """Handle download completion results."""
         ok  = sum(1 for _, s, _ in results if s)
         bad = len(results) - ok
         if ok and bad:

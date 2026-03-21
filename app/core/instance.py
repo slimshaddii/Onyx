@@ -15,45 +15,55 @@ from pathlib import Path
 from typing import Optional
 
 
+# ── Instance ──────────────────────────────────────────────────────────────────
+
 @dataclass
 class Instance:
     """
     All persistent state for one Onyx launcher instance.
 
-    Fields are stored in instance.json via save() and restored via load().
-    Mutation helpers (activate_mod, deactivate_mod, add_mod) keep the
-    mods and inactive_mods lists consistent with each other.
+    Fields are stored in instance.json via save() and restored
+    via load().  Mutation helpers (activate_mod, deactivate_mod,
+    add_mod) keep the mods and inactive_mods lists consistent
+    with each other.
     """
 
     name:                   str
     path:                   Path
-    mods:                   list[str]       = field(default_factory=list)
-    inactive_mods:          list[str]       = field(default_factory=list)
-    created:                str             = ''
-    last_played:            str             = ''
-    rimworld_version:       str             = '1.6.4630 rev467'
-    notes:                  str             = ''
-    launch_args:            list[str]       = field(default_factory=list)
-    icon_color:             str             = ''
-    icon_key:               str             = ''
-    group:                  str             = ''
-    total_playtime_minutes: int             = 0
-    mods_configured:        bool            = False
-    ignored_deps:           list[str]       = field(default_factory=list)
-    ignored_errors:         list[str]       = field(default_factory=list)
-    mod_workshop_ids:       dict[str, str]  = field(default_factory=dict)
-    rimworld_exe_override:  str             = ''
+    mods:                   list[str]      = field(
+                                               default_factory=list)
+    inactive_mods:          list[str]      = field(
+                                               default_factory=list)
+    created:                str            = ''
+    last_played:            str            = ''
+    rimworld_version:       str            = '1.6.4630 rev467'
+    notes:                  str            = ''
+    launch_args:            list[str]      = field(
+                                               default_factory=list)
+    icon_color:             str            = ''
+    icon_key:               str            = ''
+    group:                  str            = ''
+    total_playtime_minutes: int            = 0
+    mods_configured:        bool           = False
+    ignored_deps:           list[str]      = field(
+                                               default_factory=list)
+    ignored_errors:         list[str]      = field(
+                                               default_factory=list)
+    mod_workshop_ids:       dict[str, str] = field(
+                                               default_factory=dict)
+    rimworld_exe_override:  str            = ''
 
-    # ── Persistence ───────────────────────────────────────────────────────────
+    # ── Persistence ───────────────────────────────────────────────────────
 
     @classmethod
     def load(cls, path: Path) -> Optional['Instance']:
         """
         Load an Instance from path/instance.json.
 
-        Returns None if the file is missing, unreadable, or malformed.
-        The rimworld_version defaults to '1.6' (short form) when absent
-        from the JSON, which is used for mod compatibility matching.
+        Returns None if the file is missing, unreadable, or
+        malformed.  The rimworld_version defaults to '1.6'
+        (short form) when absent from the JSON, which is used
+        for mod compatibility matching.
         """
         jp = path / 'instance.json'
         if not jp.exists():
@@ -61,18 +71,23 @@ class Instance:
         try:
             with open(jp, 'r', encoding='utf-8') as f:
                 d = json.load(f)
+            if not isinstance(d, dict):
+                return None
             return cls(**_from_dict(d, path))
-        except (json.JSONDecodeError, KeyError, OSError, TypeError):
+        except (json.JSONDecodeError, KeyError,
+                OSError, TypeError):
             return None
 
     def save(self) -> None:
         """
         Atomically persist this instance to instance.json.
 
-        Writes to a .tmp file first, then renames it over the target.
-        This prevents corruption if the process is interrupted mid-write.
+        Writes to a .tmp file first, then renames it over the
+        target.  This prevents corruption if the process is
+        interrupted mid-write.
 
-        Raises RuntimeError (wrapping the original exception) on failure.
+        Raises RuntimeError (wrapping the original exception)
+        on failure.
         """
         self.path.mkdir(parents=True, exist_ok=True)
         tmp = self.path / 'instance.json.tmp'
@@ -83,51 +98,58 @@ class Instance:
         except (OSError, TypeError) as exc:
             tmp.unlink(missing_ok=True)
             raise RuntimeError(
-                f"Failed to save instance '{self.name}': {exc}") from exc
+                f"Failed to save instance "
+                f"'{self.name}': {exc}") from exc
 
     def duplicate(self, new_name: str,
-                  new_path: Optional[Path] = None) -> 'Instance':
+                  new_path: Optional[Path] = None,
+                  ) -> 'Instance':
         """
-        Copy this instance's directory to a new location and return the copy.
+        Copy this instance's directory to a new location and
+        return the copy.
 
-        The duplicate gets a new created timestamp and reset playtime/
-        last_played fields. Raises RuntimeError if the copy cannot be loaded.
+        The duplicate gets a new created timestamp and reset
+        playtime/last_played fields.  Raises RuntimeError if
+        the copy cannot be loaded.
         """
         target = new_path or self.path.parent / new_name
         shutil.copytree(self.path, target)
         inst = Instance.load(target)
         if inst is None:
             raise RuntimeError(
-                f"Failed to load duplicated instance at {target}")
+                f"Failed to load duplicated instance "
+                f"at {target}")
         inst.name                   = new_name
-        inst.created                = datetime.now().isoformat()
+        inst.created                = (
+            datetime.now().isoformat())
         inst.last_played            = ''
         inst.total_playtime_minutes = 0
         inst.save()
         return inst
 
-    # ── Mod list helpers ──────────────────────────────────────────────────────
+    # ── Mod List Helpers ──────────────────────────────────────────────────
 
     def activate_mod(self, mod_id: str) -> None:
-        """Move mod_id from inactive_mods to mods (no-op if already active)."""
+        """Move mod_id from inactive to active (no-op if active)."""
         if mod_id in self.inactive_mods:
             self.inactive_mods.remove(mod_id)
         if mod_id not in self.mods:
             self.mods.append(mod_id)
 
     def deactivate_mod(self, mod_id: str) -> None:
-        """Move mod_id from mods to inactive_mods (no-op if already inactive)."""
+        """Move mod_id from active to inactive (no-op if inactive)."""
         if mod_id in self.mods:
             self.mods.remove(mod_id)
         if mod_id not in self.inactive_mods:
             self.inactive_mods.append(mod_id)
 
-    def add_mod(self, mod_id: str, active: bool = True) -> None:
+    def add_mod(self, mod_id: str,
+                active: bool = True) -> None:
         """
         Add mod_id to either the active or inactive list.
 
-        Ensures mod_id is not present in the other list — keeps both
-        lists mutually exclusive.
+        Ensures mod_id is not present in the other list —
+        keeps both lists mutually exclusive.
         """
         if active:
             if mod_id not in self.mods:
@@ -140,7 +162,7 @@ class Instance:
             if mod_id in self.mods:
                 self.mods.remove(mod_id)
 
-    # ── Properties ────────────────────────────────────────────────────────────
+    # ── Properties ────────────────────────────────────────────────────────
 
     @property
     def all_mods(self) -> list[str]:
@@ -151,7 +173,8 @@ class Instance:
     def save_count(self) -> int:
         """Number of .rws save files in the Saves directory."""
         sd = self.saves_dir
-        return sum(1 for _ in sd.glob('*.rws')) if sd.exists() else 0
+        return (sum(1 for _ in sd.glob('*.rws'))
+                if sd.exists() else 0)
 
     @property
     def mod_count(self) -> int:
@@ -160,7 +183,7 @@ class Instance:
 
     @property
     def config_dir(self) -> Path:
-        """Path to the Config subdirectory (contains ModsConfig.xml)."""
+        """Path to the Config subdirectory."""
         return self.path / 'Config'
 
     @property
@@ -182,26 +205,36 @@ class Instance:
             path     — absolute path string
             size     — file size in bytes
             modified — ISO-format local datetime string
+
+        Individual files that cannot be read (permission error,
+        corrupt timestamp) are silently skipped.
         """
         sd = self.saves_dir
         if not sd.exists():
             return []
         saves = []
         for rws in sd.glob('*.rws'):
-            st = rws.stat()
+            try:
+                st = rws.stat()
+                modified = datetime.fromtimestamp(
+                    st.st_mtime).isoformat()
+            except (ValueError, OSError):
+                continue
             saves.append({
                 'name':     rws.stem,
                 'path':     str(rws),
                 'size':     st.st_size,
-                'modified': datetime.fromtimestamp(st.st_mtime).isoformat(),
+                'modified': modified,
             })
-        return sorted(saves, key=lambda s: s['modified'], reverse=True)
+        return sorted(
+            saves, key=lambda s: s['modified'],
+            reverse=True)
 
 
-# ── Serialisation helpers ─────────────────────────────────────────────────────
+# ── Serialisation Helpers ─────────────────────────────────────────────────────
 
 def _to_dict(inst: Instance) -> dict:
-    """Serialise an Instance to a plain dict suitable for json.dump."""
+    """Serialise an Instance to a dict for json.dump."""
     return {
         'name':                   inst.name,
         'mods':                   inst.mods,
@@ -225,28 +258,43 @@ def _to_dict(inst: Instance) -> dict:
 
 def _from_dict(d: dict, path: Path) -> dict:
     """
-    Build the keyword-argument dict for Instance.__init__ from a JSON dict.
+    Build the keyword-argument dict for Instance.__init__
+    from a JSON dict.
 
-    Missing keys fall back to safe defaults so old instance.json files
-    remain loadable after new fields are added.
+    Missing keys fall back to safe defaults so old
+    instance.json files remain loadable after new fields
+    are added.
     """
     return {
         'name':                   d.get('name', path.name),
         'path':                   path,
         'mods':                   d.get('mods', []),
-        'inactive_mods':          d.get('inactive_mods', []),
+        'inactive_mods':          d.get(
+                                      'inactive_mods', []),
         'created':                d.get('created', ''),
         'last_played':            d.get('last_played', ''),
-        'rimworld_version':       d.get('rimworld_version', '1.6'),
+        'rimworld_version':       d.get(
+                                      'rimworld_version',
+                                      '1.6'),
         'notes':                  d.get('notes', ''),
         'launch_args':            d.get('launch_args', []),
         'icon_color':             d.get('icon_color', ''),
         'icon_key':               d.get('icon_key', ''),
         'group':                  d.get('group', ''),
-        'total_playtime_minutes': d.get('total_playtime_minutes', 0),
-        'mods_configured':        d.get('mods_configured', False),
-        'ignored_deps':           d.get('ignored_deps', []),
-        'ignored_errors':         d.get('ignored_errors', []),
-        'mod_workshop_ids':       d.get('mod_workshop_ids', {}),
-        'rimworld_exe_override':  d.get('rimworld_exe_override', ''),
+        'total_playtime_minutes': d.get(
+                                      'total_playtime_'
+                                      'minutes', 0),
+        'mods_configured':        d.get(
+                                      'mods_configured',
+                                      False),
+        'ignored_deps':           d.get(
+                                      'ignored_deps', []),
+        'ignored_errors':         d.get(
+                                      'ignored_errors', []),
+        'mod_workshop_ids':       d.get(
+                                      'mod_workshop_ids',
+                                      {}),
+        'rimworld_exe_override':  d.get(
+                                      'rimworld_exe_'
+                                      'override', ''),
     }

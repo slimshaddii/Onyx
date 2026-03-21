@@ -3,8 +3,8 @@ Mod cache and 'what's new' tracking.
 Stores known mod IDs to detect newly added mods.
 """
 
-import json
 from datetime import datetime
+import json
 from pathlib import Path
 
 
@@ -13,39 +13,52 @@ class ModCache:
 
     def __init__(self, data_root: Path):
         self.cache_path = data_root / 'mod_cache.json'
-        self._known_mods: dict[str, dict] = {}  # mod_id -> {first_seen, name, source}
-        self._instance_mods: set[str] = set()   # mods used in any instance
-        self._session_new: set[str] = set()     # new mods detected this session
+        self._known_mods: dict[str, dict] = {}
+        self._instance_mods: set[str] = set()
+        self._session_new: set[str] = set()
         self._load()
 
     def _load(self) -> None:
-        """Load the cache from disk, resetting to empty state on any parse error."""
+        """Load cache from disk, resetting on any parse error."""
         if self.cache_path.exists():
             try:
-                with open(self.cache_path, 'r', encoding='utf-8') as f:
+                with open(self.cache_path, 'r',
+                          encoding='utf-8') as f:
                     data = json.load(f)
-                self._known_mods = data.get('known_mods', {})
-                self._instance_mods = set(data.get('instance_mods', []))
-            except (json.JSONDecodeError, KeyError):
+                if not isinstance(data, dict):
+                    return
+                self._known_mods = data.get(
+                    'known_mods', {})
+                self._instance_mods = set(
+                    data.get('instance_mods', []))
+            except (json.JSONDecodeError, OSError):
                 self._known_mods = {}
                 self._instance_mods = set()
 
     def save(self) -> None:
         """Persist the current cache state to disk."""
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self.cache_path.parent.mkdir(
+            parents=True, exist_ok=True)
         data = {
             'known_mods':    self._known_mods,
             'instance_mods': list(self._instance_mods),
             'last_updated':  datetime.now().isoformat(),
         }
-        with open(self.cache_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2)
+        tmp = self.cache_path.with_suffix('.json.tmp')
+        try:
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+            tmp.replace(self.cache_path)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
 
-    def update_from_scan(self, installed_mods: dict) -> list[str]:
+    def update_from_scan(
+            self, installed_mods: dict) -> list[str]:
         """
         Update cache with scan results.
 
-        Returns a list of NEW mod IDs (not seen before in any session).
+        Returns a list of NEW mod IDs (not seen before).
         Saves to disk only when new mods are found.
         """
         new_mods: list[str] = []
@@ -61,16 +74,17 @@ class ModCache:
                     'source':     info.source,
                 }
             else:
-                # Update name in case it changed
-                self._known_mods[mod_id]['name'] = info.name
+                self._known_mods[mod_id]['name'] = (
+                    info.name)
 
         if new_mods:
             self.save()
 
         return new_mods
 
-    def update_instance_mods(self, instances: list) -> None:
-        """Update which mods are used in any instance. Pass list[Instance]."""
+    def update_instance_mods(
+            self, instances: list) -> None:
+        """Update which mods are used in any instance."""
         self._instance_mods = {
             mid
             for inst in instances
@@ -97,4 +111,3 @@ class ModCache:
     def clear_new_flags(self) -> None:
         """Mark all current mods as 'known' (clear new status)."""
         self._session_new.clear()
-        

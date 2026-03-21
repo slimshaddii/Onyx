@@ -1,5 +1,7 @@
-# Onyx Launcher — Prism-inspired dark theme
-# Palette: #222222 (bg), #323232 (panels), #ffffff (text), #74d4cc (accent)
+"""Onyx Launcher theme stylesheets and color token dictionaries."""
+
+# Palette: #222222 (bg), #323232 (panels),
+#          #ffffff (text), #74d4cc (accent)
 
 THEME_COLORS: dict[str, dict[str, str]] = {
     'dark': {
@@ -27,7 +29,7 @@ THEME_COLORS: dict[str, dict[str, str]] = {
         'text':        '#1a1a1a',
         'text_dim':    '#666666',
         'text_faint':  '#444444',
-        'accent':      '#2a9d96',
+        'accent':      '#5bbdb5',
         'error':       '#cc0000',
         'warning':     '#cc6600',
         'order':       '#997700',

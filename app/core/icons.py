@@ -146,4 +146,3 @@ def _paint_symbol(painter: QPainter, size: int, symbol: str) -> None:
     painter.setFont(font)
     painter.drawText(QRect(0, 0, size, size),
                      Qt.AlignmentFlag.AlignCenter, symbol)
-    

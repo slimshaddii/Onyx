@@ -3,23 +3,25 @@ Steam native integration — open workshop pages, subscribe via Steam client.
 For users with a Steam copy of RimWorld.
 """
 
+from enum import Enum
 import os
 import platform
 import subprocess
-import webbrowser
-from enum import Enum
 from typing import Optional
+import webbrowser
 
 if platform.system() == 'Windows':
     try:
-        import winreg as _winreg
+        import winreg as _WINREG
     except ImportError:
-        _winreg = None  # type: ignore[assignment]
+        _WINREG = None  # type: ignore[assignment]
 else:
-    _winreg = None  # type: ignore[assignment]
+    _WINREG = None  # type: ignore[assignment]
 
-STEAM_WORKSHOP_URL    = "https://steamcommunity.com/sharedfiles/filedetails/?id={}"
-STEAM_WORKSHOP_BROWSE = "https://steamcommunity.com/app/294100/workshop/"
+STEAM_WORKSHOP_URL = (
+    "https://steamcommunity.com/sharedfiles/filedetails/?id={}")
+STEAM_WORKSHOP_BROWSE = (
+    "https://steamcommunity.com/app/294100/workshop/")
 
 _STEAM_COMMON_PATHS = [
     r'C:\Program Files (x86)\Steam\steam.exe',
@@ -34,6 +36,8 @@ class DownloadMethod(Enum):
     STEAMCMD     = "steamcmd"
     STEAM_NATIVE = "steam_native"
 
+
+# ── Public API ────────────────────────────────────────────────────────────────
 
 def open_in_steam(workshop_id: str) -> bool:
     """Open a workshop item in the Steam client."""
@@ -52,7 +56,8 @@ def subscribe_via_steam(workshop_id: str) -> bool:
     """Attempt to subscribe to a workshop item via Steam protocol."""
     url = (
         "steam://openurl/"
-        f"https://steamcommunity.com/sharedfiles/filedetails/?id={workshop_id}"
+        "https://steamcommunity.com/sharedfiles/"
+        f"filedetails/?id={workshop_id}"
     )
     try:
         if os.name == 'nt':
@@ -81,14 +86,15 @@ def is_steam_running() -> bool:
     try:
         result = subprocess.run(
             ['tasklist', '/FI', 'IMAGENAME eq steam.exe'],
-            capture_output=True, text=True, timeout=5, check=False)
+            capture_output=True, text=True, timeout=5,
+            check=False)
         return 'steam.exe' in result.stdout.lower()
-    except (OSError, FileNotFoundError):
+    except (OSError, subprocess.TimeoutExpired):
         return False
 
 
 def find_steam_exe() -> Optional[str]:
-    """Find the Steam executable on Windows. Returns None on non-Windows or if not found."""
+    """Find the Steam executable on Windows, or None."""
     if os.name != 'nt':
         return None
 
@@ -96,13 +102,14 @@ def find_steam_exe() -> Optional[str]:
         if os.path.isfile(p):
             return p
 
-    if _winreg is not None:
+    if _WINREG is not None:
         try:
-            key = _winreg.OpenKey(
-                _winreg.HKEY_LOCAL_MACHINE,
+            key = _WINREG.OpenKey(
+                _WINREG.HKEY_LOCAL_MACHINE,
                 r'SOFTWARE\WOW6432Node\Valve\Steam')
-            path, _ = _winreg.QueryValueEx(key, 'InstallPath')
-            _winreg.CloseKey(key)
+            path, _ = _WINREG.QueryValueEx(
+                key, 'InstallPath')
+            _WINREG.CloseKey(key)
             exe = os.path.join(path, 'steam.exe')
             if os.path.isfile(exe):
                 return exe
@@ -114,9 +121,9 @@ def find_steam_exe() -> Optional[str]:
 
 def launch_steam_download(workshop_ids: list[str]) -> bool:
     """
-    Open each workshop item in the Steam client for the user to subscribe.
+    Open each workshop item in the Steam client to subscribe.
 
-    Returns False on the first failure, True if all items were opened.
+    Returns False on the first failure, True if all opened.
     """
     for wid in workshop_ids:
         if not open_in_steam(wid):

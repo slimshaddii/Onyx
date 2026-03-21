@@ -25,7 +25,7 @@ from app.ui.detail import (
 
 
 class InstanceDetailPanel(QWidget):
-    """Right-side panel that displays details for the currently selected instance."""
+    """Right-side panel showing details for the selected instance."""
 
     launch_requested      = pyqtSignal(object)
     edit_mods_requested   = pyqtSignal(object)
@@ -37,9 +37,15 @@ class InstanceDetailPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_instance: Instance | None = None
+        self.header:  DetailHeader | None  = None
+        self.actions: DetailActions | None = None
+        self.info:    DetailInfo | None    = None
+        self.saves:   DetailSaves | None   = None
+        self.notes:   DetailNotes | None   = None
         self._build_ui()
 
     def _build_ui(self):
+        """Build the detail panel layout and sub-widgets."""
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 8, 12, 8)
 
@@ -71,10 +77,12 @@ class InstanceDetailPanel(QWidget):
         outer.addWidget(scroll)
 
         self.actions.launch_clicked.connect(self._emit_launch)
-        self.actions.edit_mods_clicked.connect(self._emit_edit_mods)
+        self.actions.edit_mods_clicked.connect(
+            self._emit_edit_mods)
         self.actions.duplicate_clicked.connect(self._emit_dup)
         self.actions.folder_clicked.connect(self._open_folder)
-        self.actions.export_pack_clicked.connect(self._emit_export_pack)
+        self.actions.export_pack_clicked.connect(
+            self._emit_export_pack)
         self.actions.delete_clicked.connect(self._emit_del)
 
     def set_instance(self, inst: Instance,
@@ -89,11 +97,7 @@ class InstanceDetailPanel(QWidget):
         self._check_untracked_playtime(inst)
 
     def _check_untracked_playtime(self, inst: Instance):
-        """Detect and record playtime from sessions that occurred outside the launcher.
-
-        If Player.log was modified after last_played, estimate elapsed
-        minutes from log timestamps and add them to the instance.
-        """
+        """Detect and record playtime from sessions outside the launcher."""
         log_path = inst.path / 'Player.log'
         if not log_path.exists():
             return
@@ -108,12 +112,14 @@ class InstanceDetailPanel(QWidget):
 
             diff_minutes = (log_dt - last).total_seconds() / 60
             if diff_minutes > 2:
-                mins = Launcher.get_session_minutes_from_log(inst.path)
+                mins = Launcher.get_session_minutes_from_log(
+                    inst.path)
                 if mins > 0:
                     inst.total_playtime_minutes += mins
                     inst.last_played = log_dt.isoformat()
                     inst.save()
         except Exception:  # pylint: disable=broad-exception-caught
+            # Playtime detection must not crash the detail panel.
             pass
 
     def clear(self):
@@ -126,26 +132,32 @@ class InstanceDetailPanel(QWidget):
         self.notes.clear()
 
     def _emit_launch(self):
+        """Forward launch request for the current instance."""
         if self.current_instance:
             self.launch_requested.emit(self.current_instance)
 
     def _emit_edit_mods(self):
+        """Forward edit-mods request for the current instance."""
         if self.current_instance:
             self.edit_mods_requested.emit(self.current_instance)
 
     def _emit_dup(self):
+        """Forward duplicate request for the current instance."""
         if self.current_instance:
             self.duplicate_requested.emit(self.current_instance)
 
     def _emit_del(self):
+        """Forward delete request for the current instance."""
         if self.current_instance:
             self.delete_requested.emit(self.current_instance)
 
     def _emit_export_pack(self):
+        """Forward export-pack request for the current instance."""
         if self.current_instance:
             self.export_pack_requested.emit(self.current_instance)
 
     def _open_folder(self):
+        """Open the instance folder in the system file manager."""
         if not self.current_instance:
             return
         p = str(self.current_instance.path)

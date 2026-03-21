@@ -25,6 +25,8 @@ from app.core.instance_manager import InstanceManager
 from app.core.modlist import parse_rimsort_modlist, read_mods_config
 from app.core.rimworld import RimWorldDetector
 
+_CREATED = object()
+
 
 class NewInstanceDialog(QDialog):
     """Dialog for creating a new instance from one of several templates."""
@@ -35,11 +37,21 @@ class NewInstanceDialog(QDialog):
         self.rw       = rw
         self.mgr      = mgr
         self.dl_queue = dl_queue
+
+        self.name_in:     QLineEdit | None = None
+        self.tmpl:        QComboBox | None  = None
+        self.import_row:  QWidget | None    = None
+        self.import_path: QLineEdit | None = None
+        self.copy_row:    QWidget | None    = None
+        self.copy_combo:  QComboBox | None  = None
+        self.notes_in:    QTextEdit | None  = None
+
         self.setWindowTitle("New Instance")
         self.setMinimumWidth(480)
         self._build()
 
     def _build(self):
+        """Build the new-instance dialog UI."""
         lo = QVBoxLayout(self)
 
         lo.addWidget(QLabel("Instance Name:"))
@@ -50,15 +62,16 @@ class NewInstanceDialog(QDialog):
         lo.addWidget(QLabel("Template:"))
         self.tmpl = QComboBox()
         self.tmpl.addItems([
-            "Vanilla (Core only)",          # 0
-            "Vanilla + All DLCs",           # 1
-            "Import from RimSort .txt",     # 2
-            "Import from ModsConfig.xml",   # 3
-            "Copy existing instance",       # 4
-            "Empty (no mods)",              # 5
-            "Import from .onyx pack",       # 6
+            "Vanilla (Core only)",
+            "Vanilla + All DLCs",
+            "Import from RimSort .txt",
+            "Import from ModsConfig.xml",
+            "Copy existing instance",
+            "Empty (no mods)",
+            "Import from .onyx pack",
         ])
-        self.tmpl.currentIndexChanged.connect(self._on_tmpl_changed)
+        self.tmpl.currentIndexChanged.connect(
+            self._on_tmpl_changed)
         lo.addWidget(self.tmpl)
 
         self.import_row = QWidget()
@@ -99,24 +112,31 @@ class NewInstanceDialog(QDialog):
         lo.addLayout(btns)
 
     def _on_tmpl_changed(self, idx: int):
+        """Show/hide import and copy rows based on template."""
         self.import_row.setVisible(idx in (2, 3, 6))
         self.copy_row.setVisible(idx == 4)
         self.name_in.setPlaceholderText(
-            "(set during import)" if idx == 6 else "My Playthrough")
+            "(set during import)" if idx == 6
+            else "My Playthrough")
 
     def _browse(self):
+        """Open a file picker for the selected template type."""
         idx = self.tmpl.currentIndex()
         filters = {
             2: ("RimSort list",   "Text (*.txt)"),
             3: ("ModsConfig.xml", "XML (*.xml)"),
-            6: ("Onyx Pack",      "Onyx Packs (*.onyx);;All Files (*)"),
+            6: ("Onyx Pack",
+                "Onyx Packs (*.onyx);;All Files (*)"),
         }
-        title, filt = filters.get(idx, ("File", "All Files (*)"))
-        p, _ = QFileDialog.getOpenFileName(self, title, "", filt)
+        title, filt = filters.get(
+            idx, ("File", "All Files (*)"))
+        p, _ = QFileDialog.getOpenFileName(
+            self, title, "", filt)
         if p:
             self.import_path.setText(p)
 
     def _create(self):
+        """Dispatch to the appropriate creation handler."""
         idx   = self.tmpl.currentIndex()
         notes = self.notes_in.toPlainText().strip()
 
@@ -138,56 +158,80 @@ class NewInstanceDialog(QDialog):
         }
 
         try:
-            handlers[idx](name, notes)
+            result = handlers[idx](name, notes)
+            if result is not _CREATED:
+                return
             self.accept()
         except Exception as e:  # pylint: disable=broad-exception-caught
+            # Creation can fail for many reasons; show error, keep dialog open.
             QMessageBox.critical(self, "Error", str(e))
 
     def _create_vanilla(self, name: str, notes: str):
+        """Create a vanilla (Core only) instance."""
         self.mgr.create_vanilla_instance(name)
         self._attach_notes(name, notes)
+        return _CREATED
 
     def _create_vanilla_dlc(self, name: str, notes: str):
-        self.mgr.create_vanilla_instance(name, self.rw.get_detected_dlcs())
+        """Create a vanilla + all DLCs instance."""
+        self.mgr.create_vanilla_instance(
+            name, self.rw.get_detected_dlcs())
         self._attach_notes(name, notes)
+        return _CREATED
 
     def _create_from_rimsort(self, name: str, notes: str):
+        """Create an instance from a RimSort .txt export."""
         p = self._require_path()
         if p is None:
-            return
+            return None
         mods = parse_rimsort_modlist(p)
         if not mods:
-            QMessageBox.warning(self, "Error", "No mods found in file.")
-            return
-        self.mgr.create_instance(name, mods=mods, notes=notes)
+            QMessageBox.warning(
+                self, "Error", "No mods found in file.")
+            return None
+        self.mgr.create_instance(
+            name, mods=mods, notes=notes)
+        return _CREATED
 
     def _create_from_modsconfig(self, name: str, notes: str):
+        """Create an instance from a ModsConfig.xml."""
         p = self._require_path()
         if p is None:
-            return
+            return None
         mods, ver, _ = read_mods_config(Path(p).parent)
-        self.mgr.create_instance(name, mods=mods, version=ver, notes=notes)
+        self.mgr.create_instance(
+            name, mods=mods, version=ver, notes=notes)
+        return _CREATED
 
     def _create_copy(self, name: str, notes: str):
+        """Create an instance by copying an existing one."""
         src = self.copy_combo.currentData()
         if not src:
-            QMessageBox.warning(self, "Error", "No instance to copy.")
-            return
+            QMessageBox.warning(
+                self, "Error", "No instance to copy.")
+            return None
         new = self.mgr.duplicate_instance(src, name)
         new.notes = notes
         new.save()
+        return _CREATED
 
     def _create_empty(self, name: str, notes: str):
-        self.mgr.create_instance(name, mods=[], notes=notes)
+        """Create an empty instance with no mods."""
+        self.mgr.create_instance(
+            name, mods=[], notes=notes)
+        return _CREATED
 
     def _create_from_onyx(self):
+        """Import a .onyx pack via the import dialog."""
         p = self.import_path.text().strip()
         if not p:
-            QMessageBox.warning(self, "Error", "Select an .onyx file.")
+            QMessageBox.warning(
+                self, "Error", "Select an .onyx file.")
             return
         from app.ui.onyxpack_dialog import OnyxImportDialog  # pylint: disable=import-outside-toplevel
-        dlg = OnyxImportDialog(self, Path(p), self.rw, self.mgr,
-                               dl_queue=self.dl_queue)
+        dlg = OnyxImportDialog(
+            self, Path(p), self.rw, self.mgr,
+            dl_queue=self.dl_queue)
         if dlg.exec():
             self.accept()
 
@@ -195,7 +239,8 @@ class NewInstanceDialog(QDialog):
         """Return the import path or show a warning and return None."""
         p = self.import_path.text().strip()
         if not p:
-            QMessageBox.warning(self, "Error", "Select a file.")
+            QMessageBox.warning(
+                self, "Error", "Select a file.")
             return None
         return p
 
@@ -203,7 +248,8 @@ class NewInstanceDialog(QDialog):
         """Write notes to an instance that was created without them."""
         if not notes:
             return
-        inst = Instance.load(self.mgr.instances_root / name)
+        inst = Instance.load(
+            self.mgr.instances_root / name)
         if inst:
             inst.notes = notes
             inst.save()

@@ -14,10 +14,6 @@ from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=no-name-in-module
 
-
-# Def types worth scanning — these are the ones most likely to cause
-# gameplay-visible conflicts. Patch XML files are excluded (they live
-# in Patches/, not Defs/).
 _SCANNABLE_TYPES = frozenset({
     'ThingDef', 'HediffDef', 'RecipeDef', 'TraitDef',
     'ResearchProjectDef', 'BiomeDef', 'FactionDef',
@@ -27,7 +23,6 @@ _SCANNABLE_TYPES = frozenset({
     'IncidentDef', 'QuestScriptDef',
 })
 
-# Type alias used throughout this module
 _Registry = dict[tuple[str, str], list['DefEntry']]
 
 
@@ -35,27 +30,26 @@ _Registry = dict[tuple[str, str], list['DefEntry']]
 class DefEntry:
     """A single def found in a mod's Defs folder."""
 
-    def_type:  str  # e.g. 'ThingDef'
-    def_name:  str  # e.g. 'Rimatomics_PipeSection'
-    mod_id:    str  # package id of the owning mod
-    mod_name:  str  # display name of the owning mod
-    file_path: str  # relative path for debugging
+    def_type:  str
+    def_name:  str
+    mod_id:    str
+    mod_name:  str
+    file_path: str
 
 
 @dataclass
 class DefCollision:
-    """Two or more mods that define the same defType + defName combination."""
+    """Two or more mods defining the same defType + defName."""
 
     def_type: str
     def_name: str
-    mods:     list[DefEntry]  # all mods that define this defName
+    mods:     list[DefEntry]
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
+# ── Public API ────────────────────────────────────────────────────────────
 
-def scan_defs(active_mods: dict,   # {mid: ModInfo}
-              game_version: str    # e.g. '1.6'
-              ) -> list[DefCollision]:
+def scan_defs(active_mods: dict,
+              game_version: str) -> list[DefCollision]:
     """
     Synchronous scan — use DefScannerThread for threaded operation.
 
@@ -79,19 +73,15 @@ def scan_defs(active_mods: dict,   # {mid: ModInfo}
     return _collisions_from_registry(registry)
 
 
-# ── Internal helpers ──────────────────────────────────────────────────────────
+# ── Internal helpers ──────────────────────────────────────────────────────
 
 def _get_defs_dirs(mod_path: Path, game_version: str) -> list[Path]:
-    """
-    Return Defs directories to scan for a mod, in priority order.
-
-    Includes both the version-specific folder and the root Defs folder.
-    Deduplicates in case they resolve to the same path.
-    """
+    """Return Defs directories to scan, deduplicating resolved paths."""
     dirs: list[Path] = []
     seen: set[str]   = set()
 
-    for candidate in (mod_path / game_version / 'Defs', mod_path / 'Defs'):
+    for candidate in (mod_path / game_version / 'Defs',
+                      mod_path / 'Defs'):
         resolved = str(candidate.resolve())
         if candidate.is_dir() and resolved not in seen:
             dirs.append(candidate)
@@ -102,10 +92,10 @@ def _get_defs_dirs(mod_path: Path, game_version: str) -> list[Path]:
 
 def _scan_defs_dir(defs_dir: Path, mod_id: str, mod_name: str,
                    registry: _Registry) -> None:
-    """Walk a Defs directory, parse all XML files, and extract defNames."""
+    """Walk a Defs directory, parse all XML files, extract defNames."""
     try:
         xml_files = list(defs_dir.rglob('*.xml'))
-    except (OSError, PermissionError):
+    except OSError:
         return
 
     for xml_file in xml_files:
@@ -150,14 +140,12 @@ def _parse_def_file(xml_file: Path, mod_id: str, mod_name: str,
             file_path=rel_path,
         )
         bucket = registry.setdefault((def_type, def_name), [])
-        # Deduplicate: same mod in both root Defs/ and version-specific Defs/
-        # is not a collision.
         if not any(e.mod_id == mod_id for e in bucket):
             bucket.append(entry)
 
 
 def _collisions_from_registry(registry: _Registry) -> list[DefCollision]:
-    """Extract entries with two or more distinct mods from the registry."""
+    """Extract entries with two or more distinct mods."""
     return [
         DefCollision(def_type=k[0], def_name=k[1], mods=v)
         for k, v in registry.items()
@@ -165,7 +153,7 @@ def _collisions_from_registry(registry: _Registry) -> list[DefCollision]:
     ]
 
 
-# ── Threaded scanner ──────────────────────────────────────────────────────────
+# ── Threaded scanner ─────────────────────────────────────────────────────
 
 class DefScannerThread(QThread):
     """
@@ -175,11 +163,11 @@ class DefScannerThread(QThread):
     -------
     progress(current, total, mod_name) — emitted per mod scanned
     finished(list[DefCollision])       — emitted when scan completes
-    error(str)                         — emitted if an unexpected error occurs
+    error(str)                         — emitted on unexpected error
     """
 
-    progress = pyqtSignal(int, int, str)  # current, total, mod_name
-    finished = pyqtSignal(list)           # list[DefCollision]
+    progress = pyqtSignal(int, int, str)
+    finished = pyqtSignal(list)
     error    = pyqtSignal(str)
 
     def __init__(self, active_mods: dict, game_version: str,
@@ -188,8 +176,8 @@ class DefScannerThread(QThread):
         self._active_mods  = active_mods
         self._game_version = game_version
 
-    def run(self):  # pylint: disable=broad-exception-caught
-        """Execute the scan, emitting progress and finished/error signals."""
+    def run(self):
+        """Execute the scan, emitting progress and finished/error."""
         try:
             registry: _Registry = {}
             items = list(self._active_mods.items())
@@ -202,11 +190,12 @@ class DefScannerThread(QThread):
                 if not info or not info.path or not info.path.exists():
                     continue
 
-                for defs_dir in _get_defs_dirs(info.path, self._game_version):
+                for defs_dir in _get_defs_dirs(info.path,
+                                               self._game_version):
                     _scan_defs_dir(defs_dir, mid, mod_name, registry)
 
             self.finished.emit(_collisions_from_registry(registry))
 
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            # QThread.run must never propagate — emit error and exit cleanly.
+            # QThread.run must never propagate — emit error signal.
             self.error.emit(str(exc))

@@ -28,7 +28,7 @@ from toposort import toposort, CircularDependencyError
 
 from app.core.rimworld import RimWorldDetector, ModInfo
 
-# ── Only these are identity-based (they have no About.xml loadBefore rule) ───
+# ── Only these are identity-based (no About.xml loadBefore rule) ─────────────
 CORE = 'ludeon.rimworld'
 DLCS = [
     'ludeon.rimworld.royalty',
@@ -40,19 +40,24 @@ DLCS = [
 DLCS_SET          = frozenset(DLCS)
 CORE_AND_DLCS_SET = frozenset({CORE} | DLCS_SET)
 
-# Minimum number of active mods that must depend on X for X to be tier 1
+# Minimum active dependents for tier-1 classification
 _FRAMEWORK_THRESHOLD = 2
 
 
-# ── Public entry point ───────────────────────────────────────────────────────
+# ── Public Entry Point ───────────────────────────────────────────────────────
 
-def auto_sort_mods(mod_ids: list[str], rw: RimWorldDetector) -> list[str]:
+def auto_sort_mods(
+        mod_ids: list[str],
+        rw: RimWorldDetector,
+) -> list[str]:
     """
-    Return a sorted copy of mod_ids respecting RimWorld load order.
+    Return a sorted copy of mod_ids respecting RimWorld load
+    order.
 
-    Mods are classified into four tiers (0–3) and topologically sorted
-    within each tier. The result preserves all active mod IDs with no
-    duplicates. See module docstring for tier definitions.
+    Mods are classified into four tiers (0-3) and topologically
+    sorted within each tier.  The result preserves all active
+    mod IDs with no duplicates.  See module docstring for tier
+    definitions.
     """
     installed  = rw.get_installed_mods()
     active_set = set(mod_ids)
@@ -60,20 +65,26 @@ def auto_sort_mods(mod_ids: list[str], rw: RimWorldDetector) -> list[str]:
     dep_graph  = _build_dep_graph(active_set, installed)
     rdep_graph = _build_rdep_graph(dep_graph, active_set)
 
-    tier_zero_ids  = _collect_tier_zero(active_set, installed, dep_graph)
-    tier_three_ids = _collect_tier_three(active_set, installed,
-                                          rdep_graph, tier_zero_ids)
-    tier_one_ids   = _collect_tier_one(active_set, dep_graph, rdep_graph,
-                                        tier_zero_ids, tier_three_ids)
+    tier_zero_ids  = _collect_tier_zero(
+        active_set, installed, dep_graph)
+    tier_three_ids = _collect_tier_three(
+        active_set, installed, rdep_graph, tier_zero_ids)
+    tier_one_ids   = _collect_tier_one(
+        active_set, dep_graph, rdep_graph,
+        tier_zero_ids, tier_three_ids)
 
-    t0, t1, t2, t3 = _bucket(mod_ids,
-                               tier_zero_ids, tier_one_ids, tier_three_ids)
+    t0, t1, t2, t3 = _bucket(
+        mod_ids, tier_zero_ids, tier_one_ids,
+        tier_three_ids)
 
     s0 = _reorder_tier_zero(
-            _sort_tier_list(t0, dep_graph, installed), installed)
+            _sort_tier_list(t0, dep_graph, installed),
+            installed, dep_graph)
     s1 = _sort_tier_list(t1, dep_graph, installed)
     s2 = _sort_tier_list(t2, dep_graph, installed)
-    s3 = _sort_tier_list(t3, _trim_graph(dep_graph, set(t3)), installed)
+    s3 = _sort_tier_list(
+            t3, _trim_graph(dep_graph, set(t3)),
+            installed)
 
     seen:   set[str]  = set()
     result: list[str] = []
@@ -84,12 +95,13 @@ def auto_sort_mods(mod_ids: list[str], rw: RimWorldDetector) -> list[str]:
     return result
 
 
-# ── Graph Builders ───────────────────────────────────────────────────────
+# ── Graph Builders ───────────────────────────────────────────────────────────
 
 def _all_deps(info: ModInfo) -> list[str]:
     """
-    Return a deduplicated, lowercased list of all load-ordering dependencies
-    for a mod: forced_dependencies + dependencies + load_after, in that order.
+    Return a deduplicated, lowercased list of all load-ordering
+    dependencies for a mod: forced_dependencies + dependencies
+    + load_after, in that order.
     """
     seen:   set[str]  = set()
     result: list[str] = []
@@ -111,11 +123,13 @@ def _build_dep_graph(
     Forward graph: { mid: {must_load_before_mid} }
 
     Rules applied:
-      • forced_deps + deps + loadAfter  → mid loads AFTER them
-      • loadBefore X                    → X loads AFTER mid
-                                          (add mid to X's dep set)
+      - forced_deps + deps + loadAfter -> mid loads AFTER them
+      - loadBefore X -> X loads AFTER mid
+        (add mid to X's dep set)
     """
-    graph: dict[str, set[str]] = {mid: set() for mid in active_set}
+    graph: dict[str, set[str]] = {
+        mid: set() for mid in active_set
+    }
 
     for mid in active_set:
         info = installed.get(mid)
@@ -129,7 +143,7 @@ def _build_dep_graph(
         for before in info.load_before:
             bl = before.lower()
             if bl in active_set and bl != mid:
-                graph[bl].add(mid)   # bl must load after mid
+                graph[bl].add(mid)
 
     return graph
 
@@ -142,7 +156,9 @@ def _build_rdep_graph(
     Reverse graph derived from dep_graph.
     { mid: {mods_that_load_after_mid} }
     """
-    rgraph: dict[str, set[str]] = {mid: set() for mid in active_set}
+    rgraph: dict[str, set[str]] = {
+        mid: set() for mid in active_set
+    }
     for mid, deps in dep_graph.items():
         for dep in deps:
             if dep in rgraph:
@@ -150,7 +166,7 @@ def _build_rdep_graph(
     return rgraph
 
 
-# ── Tier-Classifiers: All Dynamic ─────────────────────────────────────────────
+# ── Tier Classifiers: All Dynamic ─────────────────────────────────────────────
 
 def _collect_tier_zero(
     active_set: set[str],
@@ -158,8 +174,9 @@ def _collect_tier_zero(
     dep_graph:  dict[str, set[str]],
 ) -> set[str]:
     """
-    Tier 0 = Core + DLCs (by identity) + any mod whose About.xml sets
-    load_first=True (loadBefore ludeon.rimworld) + their recursive deps.
+    Tier 0 = Core + DLCs (by identity) + any mod whose
+    About.xml sets load_first=True (loadBefore
+    ludeon.rimworld) + their recursive deps.
     """
     seeds: set[str] = set()
 
@@ -181,9 +198,10 @@ def _collect_tier_three(
     tier_zero_ids: set[str],
 ) -> set[str]:
     """
-    Tier 3 = mods whose About.xml sets load_last=True + their
-    reverse-dependents (mods that must load before them pull them last too).
-    Excludes anything already in tier 0.
+    Tier 3 = mods whose About.xml sets load_last=True +
+    their reverse-dependents (mods that must load before
+    them pull them last too).  Excludes anything already
+    in tier 0.
     """
     seeds: set[str] = set()
     for mid in active_set:
@@ -193,7 +211,8 @@ def _collect_tier_three(
         if info and info.load_last:
             seeds.add(mid)
 
-    expanded = _expand_reverse(seeds, rdep_graph, active_set)
+    expanded = _expand_reverse(
+        seeds, rdep_graph, active_set)
     return expanded - tier_zero_ids
 
 
@@ -205,16 +224,19 @@ def _collect_tier_one(
     tier_three_ids: set[str],
 ) -> set[str]:
     """
-    Tier 1 = mods that behave as frameworks/libraries, detected dynamically:
+    Tier 1 = mods that behave as frameworks/libraries,
+    detected dynamically:
 
       A mod is tier 1 when ALL of:
         1. Not already in tier 0 or tier 3
-        2. At least _FRAMEWORK_THRESHOLD other active mods depend on it
+        2. At least _FRAMEWORK_THRESHOLD other active mods
+           depend on it
         3. It has no tier-2 dependencies of its own
            (i.e. all its own deps are already tier 0)
 
-    Rule 3 prevents pulling in large dependency chains into tier 1 and
-    keeps only true "root library" mods here.
+    Rule 3 prevents pulling in large dependency chains
+    into tier 1 and keeps only true "root library" mods
+    here.
     """
     exclude   = tier_zero_ids | tier_three_ids
     tier_one: set[str] = set()
@@ -222,23 +244,27 @@ def _collect_tier_one(
     for mid in active_set:
         if mid in exclude:
             continue
-        if len(rdep_graph.get(mid, set()) - exclude) < _FRAMEWORK_THRESHOLD:
+        rdeps = rdep_graph.get(mid, set()) - exclude
+        if len(rdeps) < _FRAMEWORK_THRESHOLD:
             continue
         if dep_graph.get(mid, set()) - tier_zero_ids:
             continue
         tier_one.add(mid)
 
-    return _expand_forward(tier_one, dep_graph, active_set) - exclude
+    return (
+        _expand_forward(tier_one, dep_graph, active_set)
+        - exclude
+    )
 
 
-# ── Graph Helpers ──────────────────────────────────────────────────────────
+# ── Graph Helpers ─────────────────────────────────────────────────────────────
 
 def _expand_forward(
     seeds:      set[str],
     dep_graph:  dict[str, set[str]],
     active_set: set[str],
 ) -> set[str]:
-    """Expand seeds by following forward dependency edges (stack-based DFS)."""
+    """Expand seeds by following forward dep edges (DFS)."""
     result:    set[str]  = set(seeds)
     queue:     list[str] = list(seeds)
     processed: set[str]  = set()
@@ -260,7 +286,7 @@ def _expand_reverse(
     rdep_graph: dict[str, set[str]],
     active_set: set[str],
 ) -> set[str]:
-    """Expand seeds by following reverse dependency edges (stack-based DFS)."""
+    """Expand seeds by following reverse dep edges (DFS)."""
     result:    set[str]  = set(seeds)
     queue:     list[str] = list(seeds)
     processed: set[str]  = set()
@@ -271,7 +297,8 @@ def _expand_reverse(
             continue
         processed.add(mid)
         for rdep in rdep_graph.get(mid, set()):
-            if rdep in active_set and rdep not in result:
+            if (rdep in active_set
+                    and rdep not in result):
                 result.add(rdep)
                 queue.append(rdep)
     return result
@@ -289,7 +316,7 @@ def _trim_graph(
     }
 
 
-# ── Bucketing ─────────────────────────────────────────────────────────────
+# ── Bucketing ─────────────────────────────────────────────────────────────────
 
 def _bucket(
     mod_ids:        list[str],
@@ -297,7 +324,7 @@ def _bucket(
     tier_one_ids:   set[str],
     tier_three_ids: set[str],
 ) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Partition mod_ids into four tier lists, preserving original order."""
+    """Partition mod_ids into four tier lists, preserving order."""
     t0: list[str] = []
     t1: list[str] = []
     t2: list[str] = []
@@ -314,14 +341,14 @@ def _bucket(
     return t0, t1, t2, t3
 
 
-# ── Topological SOrt (per tier) ─────────────────────────────────────────────
+# ── Topological Sort (per tier) ──────────────────────────────────────────────
 
 def _sort_tier_list(
     tier_mods: list[str],
     dep_graph: dict[str, set[str]],
     installed: dict[str, ModInfo],
 ) -> list[str]:
-    """Topologically sort one tier's mod list using its sub-graph."""
+    """Topologically sort one tier's mod list."""
     if not tier_mods:
         return []
     tier_set  = set(tier_mods)
@@ -335,15 +362,19 @@ def _run_toposort(
     installed: dict[str, ModInfo],
 ) -> list[str]:
     """
-    Run toposort on sub_graph, sorting each level alphabetically by mod name.
+    Run toposort on sub_graph, sorting each level
+    alphabetically by mod name.
 
-    Falls back to a fully alphabetical sort if a circular dependency is detected.
-    Appends any nodes not surfaced by toposort as a safety net.
+    Falls back to a fully alphabetical sort if a circular
+    dependency is detected.  Appends any nodes not surfaced
+    by toposort as a safety net.
     """
     try:
         levels = list(toposort(sub_graph))
     except CircularDependencyError:
-        return sorted(tier_set, key=lambda m: _mod_name(m, installed))
+        return sorted(
+            tier_set,
+            key=lambda m: _mod_name(m, installed))
 
     result: list[str] = []
     placed: set[str]  = set()
@@ -364,33 +395,71 @@ def _run_toposort(
     return result
 
 
-# ── Tier 0 canonical reorder ──────────────────────────────────────────────────
+# ── Tier 0 Canonical Reorder ─────────────────────────────────────────────────
 
-def _reorder_tier_zero(sorted_t0: list[str],
-                        installed: dict[str, ModInfo]) -> list[str]:
+def _reorder_tier_zero(
+        sorted_t0: list[str],
+        installed: dict[str, ModInfo],
+        dep_graph: dict[str, set[str]],
+) -> list[str]:
     """
-    Within tier 0:
-      1. True pre-patchers (load_first=True — loadBefore ludeon.rimworld)
+    Within tier 0, enforce canonical sub-order while
+    respecting dependency edges:
+
+      1. Pre-patcher deps + pre-patchers (toposorted)
       2. Core
-      3. Mods that are tier-0 because a DLC loadBefore-depends on them
-         (e.g. Performance Fish) — in toposorted order, already correct
+      3. Remaining tier-0 non-Core/DLC mods (toposorted)
       4. DLCs in canonical release order
-    """
-    true_pre = [m for m in sorted_t0
-                if m not in CORE_AND_DLCS_SET
-                and (info := installed.get(m)) and info.load_first]
-    core     = [m for m in sorted_t0 if m == CORE]
-    between  = [m for m in sorted_t0
-                if m not in CORE_AND_DLCS_SET
-                and not (installed.get(m) and installed.get(m).load_first)]
-    dlcs     = [d for d in DLCS if d in set(sorted_t0)]
 
-    return true_pre + core + between + dlcs
+    Pre-patcher dependencies are found by walking the
+    dep_graph forward from every load_first mod, so they
+    load before the pre-patchers that need them.
+    """
+    t0_set = set(sorted_t0)
+
+    pre_ids = {
+        m for m in sorted_t0
+        if m not in CORE_AND_DLCS_SET
+        and (info := installed.get(m))
+        and info.load_first
+    }
+
+    # Expand pre-patchers to include their non-Core/DLC
+    # deps within tier 0 (stack-based DFS)
+    pre_group: set[str] = set(pre_ids)
+    stack = list(pre_ids)
+    visited: set[str] = set()
+    while stack:
+        mid = stack.pop()
+        if mid in visited:
+            continue
+        visited.add(mid)
+        for dep in dep_graph.get(mid, set()):
+            if (dep in t0_set
+                    and dep not in CORE_AND_DLCS_SET
+                    and dep not in pre_group):
+                pre_group.add(dep)
+                stack.append(dep)
+
+    # Preserve toposorted order within each sub-group
+    before_core = [m for m in sorted_t0
+                   if m in pre_group]
+    core = [m for m in sorted_t0 if m == CORE]
+    between = [m for m in sorted_t0
+               if m not in CORE_AND_DLCS_SET
+               and m not in pre_group]
+    dlcs = [d for d in DLCS if d in t0_set]
+
+    return before_core + core + between + dlcs
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _mod_name(mid: str, installed: dict[str, ModInfo]) -> str:
-    """Return the lowercased mod name for sorting, falling back to mid."""
+def _mod_name(
+        mid: str,
+        installed: dict[str, ModInfo],
+) -> str:
+    """Return lowercased mod name for sorting, fallback mid."""
     info = installed.get(mid)
-    return info.name.lower() if (info and info.name) else mid
+    return (info.name.lower()
+            if (info and info.name) else mid)
