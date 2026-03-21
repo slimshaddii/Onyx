@@ -24,10 +24,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller toposort
-          pip install PyQt6 PyQt6-Qt6 PyQt6-sip
-          pip install PyQt6-WebEngine PyQt6-WebEngine-Qt6
-          pip install Pillow
+          pip install pyinstaller
+          pip install -r requirements.txt
+          pip install PyQt6-Qt6 PyQt6-WebEngine-Qt6
 
       - name: Build
         run: python build.py --clean
@@ -106,10 +105,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller toposort
-          pip install PyQt6 PyQt6-Qt6 PyQt6-sip
-          pip install PyQt6-WebEngine PyQt6-WebEngine-Qt6
-          pip install Pillow
+          pip install pyinstaller
+          pip install -r requirements.txt
+          pip install PyQt6-Qt6 PyQt6-WebEngine-Qt6
 
       - name: Build (with virtual display)
         run: |
@@ -139,10 +137,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller toposort
-          pip install PyQt6 PyQt6-Qt6 PyQt6-sip
-          pip install PyQt6-WebEngine PyQt6-WebEngine-Qt6
-          pip install Pillow
+          pip install pyinstaller
+          pip install -r requirements.txt
+          pip install PyQt6-Qt6 PyQt6-WebEngine-Qt6
 
       - name: Build
         run: python build.py --clean
