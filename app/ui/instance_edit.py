@@ -63,6 +63,8 @@ class InstanceEditDialog(QDialog):
             QGridLayout | None) = None
         self.mod_list: (
             QListWidget | None) = None
+        self._mods_count_lbl: (
+            QLabel | None) = None
         self.notes_edit: (
             QTextEdit | None) = None
         self._settings_arg_cbs: (
@@ -132,6 +134,8 @@ class InstanceEditDialog(QDialog):
 
         self.instance_changed.connect(
             self._saves_tab.refresh)
+        self.instance_changed.connect(
+            self._refresh_mods_tab)
 
         btns = QHBoxLayout()
         btns.addStretch()
@@ -216,27 +220,11 @@ class InstanceEditDialog(QDialog):
     def _build_mods_tab(self) -> QWidget:
         w  = QWidget()
         lo = QVBoxLayout(w)
-        mods, _, _ = read_mods_config(
-            self.inst.config_dir)
-        lo.addWidget(QLabel(
-            f"Active mods: {len(mods)}"))
+        self._mods_count_lbl = QLabel("")
+        lo.addWidget(self._mods_count_lbl)
         self.mod_list = QListWidget()
-        installed = (
-            self.rw.get_installed_mods()
-            if self.rw else {})
-        for mid in mods:
-            name = (
-                installed[mid].name
-                if mid in installed else mid)
-            found = mid in installed
-            item = QListWidgetItem(
-                f"{'✔' if found else '✖'}"
-                f" {name}  [{mid}]")
-            if not found:
-                item.setForeground(
-                    Qt.GlobalColor.red)
-            self.mod_list.addItem(item)
         lo.addWidget(self.mod_list)
+        self._refresh_mods_tab()
 
         mod_btns = QHBoxLayout()
         edit_btn = QPushButton(
@@ -253,6 +241,35 @@ class InstanceEditDialog(QDialog):
         mod_btns.addStretch()
         lo.addLayout(mod_btns)
         return w
+
+    def _refresh_mods_tab(self):
+        """Rebuild the mods list and update
+        active/inactive counts."""
+        mods, _, _ = read_mods_config(
+            self.inst.config_dir)
+        if not mods:
+            mods = list(self.inst.mods)
+        inactive_count = len(
+            self.inst.inactive_mods)
+        self._mods_count_lbl.setText(
+            f"Active: {len(mods)}  •  "
+            f"Inactive: {inactive_count}")
+        self.mod_list.clear()
+        installed = (
+            self.rw.get_installed_mods()
+            if self.rw else {})
+        for mid in mods:
+            name = (
+                installed[mid].name
+                if mid in installed else mid)
+            found = mid in installed
+            item = QListWidgetItem(
+                f"{'✔' if found else '✖'}"
+                f" {name}  [{mid}]")
+            if not found:
+                item.setForeground(
+                    Qt.GlobalColor.red)
+            self.mod_list.addItem(item)
 
     # ── Notes Tab ────────────────────────────────
 

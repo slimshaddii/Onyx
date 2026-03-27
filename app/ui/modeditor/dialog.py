@@ -33,13 +33,13 @@ from app.ui.modeditor.preview_panel import PreviewPanel
 from app.ui.styles import get_colors
 
 
-# ── ModEditorDialog ──────────────────────────────────────────────────────────
+# ── ModEditorDialog ──────────────────────────────
 
 class ModEditorDialog(
         ItemBuilder, ModActions, ModFixes, ModIO,
         ModContext, QDialog):
-    """
-    Three-panel mod editor.
+    """Three-panel mod editor.
+
     Left   — inactive mods for this instance
     Centre — active mods (drag to reorder)
     Right  — preview panel
@@ -73,21 +73,24 @@ class ModEditorDialog(
             'error', 'dep', 'warning', 'order',
         }
         self._defer_updates = False
-        self._chip_btns: dict[str, QPushButton] = {}
+        self._chip_btns: (
+            dict[str, QPushButton]) = {}
         self._known_mod_ids = (
             self._load_known_mod_ids())
         self._original_mods: set[str] = set(
             instance.mods)
 
         # Widget attrs — assigned in _build_ui()
-        self.cnt:        QLabel       | None = None
-        self.preview:    PreviewPanel | None = None
-        self.filter_btn: QPushButton  | None = None
-        self.a_search:   QLineEdit    | None = None
-        self.avail:      DragDropList | None = None
-        self.empty_hint: QLabel       | None = None
-        self.ac_search:  QLineEdit    | None = None
-        self.active:     DragDropList | None = None
+        self.cnt:         QLabel       | None = None
+        self.preview:     PreviewPanel | None = None
+        self.filter_btn:  QPushButton  | None = None
+        self.a_search:    QLineEdit    | None = None
+        self.avail:       DragDropList | None = None
+        self.empty_hint:  QLabel       | None = None
+        self.ac_search:   QLineEdit    | None = None
+        self.active:      DragDropList | None = None
+        self._avail_hdr:  QLabel       | None = None
+        self._active_hdr: QLabel       | None = None
 
         self.setWindowTitle(
             f"Mods — {instance.name}")
@@ -97,7 +100,8 @@ class ModEditorDialog(
         self._load()
 
     def _load_known_mod_ids(self) -> set[str]:
-        data_root = AppSettings.instance().data_root
+        data_root = (
+            AppSettings.instance().data_root)
         if not data_root:
             return set()
         try:
@@ -112,8 +116,9 @@ class ModEditorDialog(
                 im.scan_instances())
             return cache.get_instance_mod_ids()
         except Exception:  # pylint: disable=broad-exception-caught
-            # ModCache/InstanceManager failures during
-            # init are non-fatal; editor can still open
+            # ModCache/InstanceManager failures
+            # during init are non-fatal; editor
+            # can still open
             return set()
 
     def _ignored_deps_set(self) -> set[str]:
@@ -122,7 +127,7 @@ class ModEditorDialog(
     def _ignored_errors_set(self) -> set[str]:
         return set(self.inst.ignored_errors)
 
-    # ── UI Construction ──────────────────────────────────────────────────
+    # ── UI Construction ──────────────────────────
 
     def _build_ui(self) -> None:
         lo = QVBoxLayout(self)
@@ -172,7 +177,7 @@ class ModEditorDialog(
         if self.active.hasFocus():
             self._rem_sel()
 
-    # ── Filter Row ────────────────────────────────────────────────────────
+    # ── Filter Row ───────────────────────────────
 
     def _build_filter_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -186,8 +191,8 @@ class ModEditorDialog(
             "font-size:10px; padding:1px 8px; "
             "border-radius:3px;")
         self.filter_btn.setToolTip(
-            "Toggle filter — show only mods matching "
-            "active categories")
+            "Toggle filter — show only mods "
+            "matching active categories")
         self.filter_btn.clicked.connect(
             self._on_filter_toggle)
         row.addWidget(self.filter_btn)
@@ -225,20 +230,22 @@ class ModEditorDialog(
     def _chip_tooltip(self, cat: str) -> str:
         tips = {
             'error': (
-                'Critical errors — not on disk, '
-                'missing deps, incompatible mods'),
+                'Critical errors — not on disk,'
+                ' missing deps, incompatible'),
             'dep': (
                 'Dependencies — dep exists '
                 'but not active'),
             'warning': (
-                'Compatibility — version mismatch, '
-                'unstable, better alternative'),
+                'Compatibility — version '
+                'mismatch, unstable, better '
+                'alternative'),
             'order': (
                 'Load order — '
-                'loadAfter/loadBefore violations'),
+                'loadAfter/loadBefore '
+                'violations'),
             'performance': (
-                'Performance — JuMLi community '
-                'performance notices'),
+                'Performance — JuMLi community'
+                ' performance notices'),
             'info': (
                 'Info — settings advice '
                 'from JuMLi'),
@@ -256,7 +263,8 @@ class ModEditorDialog(
             counts = count_issues(
                 self.active.get_ids(),
                 self.all_mods,
-                self.inst.rimworld_version or '',
+                self.inst.rimworld_version
+                or '',
                 ignored_deps=(
                     self._ignored_deps_set()),
                 ignored_errors=(
@@ -268,7 +276,8 @@ class ModEditorDialog(
         if self._filter_on:
             self.filter_btn.setText("Filter ▲")
             self.filter_btn.setStyleSheet(
-                f"font-size:10px; padding:1px 8px;"
+                f"font-size:10px;"
+                f" padding:1px 8px;"
                 f" border-radius:3px;"
                 f" background:{worst_color};"
                 f" color:{c['bg']};"
@@ -278,7 +287,8 @@ class ModEditorDialog(
         else:
             self.filter_btn.setText("Filter ▼")
             self.filter_btn.setStyleSheet(
-                f"font-size:10px; padding:1px 8px;"
+                f"font-size:10px;"
+                f" padding:1px 8px;"
                 f" border-radius:3px;"
                 f" background:{c['bg_mid']};"
                 f" color:{worst_color};"
@@ -297,7 +307,8 @@ class ModEditorDialog(
 
         if count == 0:
             btn.setStyleSheet(
-                f"font-size:10px; padding:1px 6px;"
+                f"font-size:10px;"
+                f" padding:1px 6px;"
                 f" border-radius:3px;"
                 f" background:{c['bg_mid']};"
                 f" color:{c['text_dim']};"
@@ -310,7 +321,8 @@ class ModEditorDialog(
 
         if active:
             btn.setStyleSheet(
-                f"font-size:10px; padding:1px 6px;"
+                f"font-size:10px;"
+                f" padding:1px 6px;"
                 f" border-radius:3px;"
                 f" background:{color};"
                 f" color:{c['bg']};"
@@ -318,7 +330,8 @@ class ModEditorDialog(
                 f" border:1px solid {color};")
         else:
             btn.setStyleSheet(
-                f"font-size:10px; padding:1px 6px;"
+                f"font-size:10px;"
+                f" padding:1px 6px;"
                 f" border-radius:3px;"
                 f" background:{c['bg_mid']};"
                 f" color:{color};"
@@ -366,7 +379,7 @@ class ModEditorDialog(
                 self._ignored_errors_set()))
         self.active.filter_by_ids(ids)
 
-    # ── Avail Panel ───────────────────────────────────────────────────────
+    # ── Avail Panel ──────────────────────────────
 
     def _build_avail_panel(self) -> QWidget:
         w  = QWidget()
@@ -375,8 +388,9 @@ class ModEditorDialog(
         lo.setSpacing(2)
 
         hdr = QHBoxLayout()
-        hdr.addWidget(
-            QLabel("Instance Mods (inactive)"))
+        self._avail_hdr = QLabel(
+            "Instance Mods (inactive)")
+        hdr.addWidget(self._avail_hdr)
         hdr.addStretch()
         lib_btn = QPushButton("📚 Library")
         lib_btn.setToolTip(
@@ -403,9 +417,11 @@ class ModEditorDialog(
         self.avail.items_changed.connect(
             self._on_items_changed)
         self.avail.setContextMenuPolicy(
-            Qt.ContextMenuPolicy.CustomContextMenu)
-        self.avail.customContextMenuRequested.connect(
-            self._ctx_avail)
+            Qt.ContextMenuPolicy
+            .CustomContextMenu)
+        self.avail \
+            .customContextMenuRequested \
+            .connect(self._ctx_avail)
         lo.addWidget(self.avail)
 
         self.a_search.textChanged.connect(
@@ -422,21 +438,23 @@ class ModEditorDialog(
 
         row = QHBoxLayout()
         row.addWidget(
-            self._btn("Activate →", self._add_sel))
+            self._btn("Activate →",
+                       self._add_sel))
         row.addWidget(
             self._btn("All ⇒", self._add_all))
         lo.addLayout(row)
         return w
 
-    # ── Active Panel ──────────────────────────────────────────────────────
+    # ── Active Panel ─────────────────────────────
 
     def _build_active_panel(self) -> QWidget:
         w  = QWidget()
         lo = QVBoxLayout(w)
         lo.setContentsMargins(0, 0, 0, 0)
         lo.setSpacing(2)
-        lo.addWidget(
-            QLabel("Active — drag to reorder ↕"))
+        self._active_hdr = QLabel(
+            "Active — drag to reorder ↕")
+        lo.addWidget(self._active_hdr)
 
         self.ac_search = QLineEdit()
         self.ac_search.setPlaceholderText(
@@ -455,8 +473,10 @@ class ModEditorDialog(
         self.active.needs_badge_refresh.connect(
             self._on_items_changed)
         self.active.setContextMenuPolicy(
-            Qt.ContextMenuPolicy.CustomContextMenu)
-        self.active.customContextMenuRequested \
+            Qt.ContextMenuPolicy
+            .CustomContextMenu)
+        self.active \
+            .customContextMenuRequested \
             .connect(self._ctx_active)
         lo.addWidget(self.active)
 
@@ -476,7 +496,7 @@ class ModEditorDialog(
         self.active.set_partner(self.avail)
         return w
 
-    # ── Bottom Bar ────────────────────────────────────────────────────────
+    # ── Bottom Bar ───────────────────────────────
 
     def _build_bottom_bar(self) -> QHBoxLayout:
         b = QHBoxLayout()
@@ -519,7 +539,7 @@ class ModEditorDialog(
         b.clicked.connect(slot)
         return b
 
-    # ── Load / Refresh ────────────────────────────────────────────────────
+    # ── Load / Refresh ───────────────────────────
 
     def _load(self) -> None:
         mods, _, _ = read_mods_config(
@@ -558,7 +578,8 @@ class ModEditorDialog(
                 shown.add(mid)
 
         if not self.inst.mods_configured:
-            for mid, info in self.all_mods.items():
+            for mid, info in (
+                    self.all_mods.items()):
                 if (mid not in active_set
                         and mid not in shown):
                     self._mk_avail(mid, info)
@@ -591,7 +612,7 @@ class ModEditorDialog(
                 self._ignored_errors_set()))
         self.preview.show_mod(info, mid, badges)
 
-    # ── Dialog Launchers ──────────────────────────────────────────────────
+    # ── Dialog Launchers ─────────────────────────
 
     def _open_library(self) -> None:
         from app.ui.modeditor.library_dialog import LibraryDialog  # pylint: disable=import-outside-toplevel
@@ -605,7 +626,8 @@ class ModEditorDialog(
         if dlg.exec() and dlg.selected_ids:
             for mid in dlg.selected_ids:
                 if (mid in self.all_mods
-                        and mid not in instance_ids):
+                        and mid
+                        not in instance_ids):
                     self._mk_avail(
                         mid, self.all_mods[mid])
             self.avail.apply_item_widgets()
@@ -620,10 +642,10 @@ class ModEditorDialog(
         if not history.snapshots:
             QMessageBox.information(
                 self, "No History",
-                "No snapshots recorded yet.\n\n"
-                "Snapshots are saved automatically "
-                "each time you save from the mod "
-                "editor.")
+                "No snapshots recorded yet."
+                "\n\nSnapshots are saved "
+                "automatically each time you "
+                "save from the mod editor.")
             return
 
         dlg = HistoryDialog(
@@ -631,7 +653,8 @@ class ModEditorDialog(
             current_mods=self.active.get_ids(),
             mod_names=self.names)
         if (dlg.exec()
-                and dlg.rolled_back_mods is not None):
+                and dlg.rolled_back_mods
+                is not None):
             self._apply_rollback(
                 dlg.rolled_back_mods)
 
@@ -667,8 +690,8 @@ class ModEditorDialog(
         QMessageBox.information(
             self, "Rolled Back",
             f"Loaded {len(mods)} mods from "
-            f"snapshot.\n\nClick Save to apply, "
-            f"or Cancel to discard.")
+            f"snapshot.\n\nClick Save to "
+            f"apply, or Cancel to discard.")
 
     def _open_conflicts(self) -> None:
         from app.ui.modeditor.conflict_dialog import ConflictReportDialog  # pylint: disable=import-outside-toplevel
@@ -694,7 +717,8 @@ class ModEditorDialog(
             if mid in self.all_mods
         }
         game_version = (
-            self.inst.rimworld_version or '1.6')
+            self.inst.rimworld_version
+            or '1.6')
         parts = game_version.split('.')
         if len(parts) >= 2:
             game_version = (
@@ -704,7 +728,7 @@ class ModEditorDialog(
             self, active_mods,
             game_version).exec()
 
-    # ── Helpers ───────────────────────────────────────────────────────────
+    # ── Helpers ──────────────────────────────────
 
     def _avail_ids(self) -> list[str]:
         return [
@@ -721,9 +745,17 @@ class ModEditorDialog(
         if self._defer_updates:
             return
 
+        ac = self.active.count()
+        av = self.avail.count()
+
         self.cnt.setText(
-            f"{self.active.count()} active · "
-            f"{self.avail.count()} inactive")
+            f"{ac} active · {av} inactive")
+        self._avail_hdr.setText(
+            f"Instance Mods"
+            f" (inactive — {av})")
+        self._active_hdr.setText(
+            f"Active ({ac})"
+            f" — drag to reorder ↕")
 
         counts = count_issues(
             self.active.get_ids(), self.all_mods,

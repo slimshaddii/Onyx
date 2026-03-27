@@ -22,6 +22,7 @@ from PyQt6.QtCore import (  # pylint: disable=no-name-in-module
 
 from app.core.app_settings import AppSettings
 from app.core.instance import Instance
+from app.core.modlist import write_mods_config
 from app.core.paths import mods_dir
 from app.core.rimworld import RimWorldDetector
 from app.core.save_parser import (
@@ -377,7 +378,6 @@ class EditSavesTab(QWidget):
             if mid_lower in save_set:
                 continue
             info = installed.get(mid_lower)
-            # ModInfo.name assumed — flagged
             name = info.name if info else mid
             prefix = _STATUS_PREFIX[_STATUS_ADDED]
             text = (
@@ -399,7 +399,7 @@ class EditSavesTab(QWidget):
             - inactive_count)
 
         parts = [
-            f"{mod_count} mods",
+            f"{mod_count} save mods",
             f"{active_count} active",
             f"{inactive_count} inactive",
             f"{missing_count} missing",
@@ -510,7 +510,6 @@ class EditSavesTab(QWidget):
         names = []
         for mid in added[:10]:
             info = installed.get(mid.lower())
-            # ModInfo.name assumed — flagged
             names.append(
                 info.name if info else mid)
 
@@ -545,6 +544,7 @@ class EditSavesTab(QWidget):
         self.inst.mods = new_mods
         self.inst.inactive_mods = new_inactive
         self.inst.save()
+        self._write_mods_config()
         self.instance_changed.emit()
         self.refresh()
 
@@ -763,6 +763,7 @@ class EditSavesTab(QWidget):
         self.inst.mods = present
         self.inst.inactive_mods = new_inactive
         self.inst.save()
+        self._write_mods_config()
         self.instance_changed.emit()
         self.refresh()
 
@@ -858,6 +859,15 @@ class EditSavesTab(QWidget):
                 ['xdg-open', str(path)])
 
     # ── Helpers ──────────────────────────────────
+
+    def _write_mods_config(self):
+        """Sync ModsConfig.xml with inst.mods."""
+        write_mods_config(
+            self.inst.config_dir,
+            self.inst.mods,
+            version=(
+                self.inst.rimworld_version
+                or '1.6.4630 rev467'))
 
     def _build_name_map(self) -> dict[str, str]:
         if self._current_header is None:
