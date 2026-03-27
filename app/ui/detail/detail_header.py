@@ -19,6 +19,7 @@ class DetailHeader(QWidget):
 
         self.path_label = QLabel("")
         self.path_label.setObjectName("statLabel")
+        self.path_label.setWordWrap(True)
         self.path_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse)
         lo.addWidget(self.path_label)

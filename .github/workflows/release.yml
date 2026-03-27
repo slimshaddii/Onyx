@@ -170,36 +170,16 @@ jobs:
             A mod manager and instance launcher for RimWorld with true per-instance isolation.
 
             ### What's New
-            - Download Manager with real-time speed, ETA, and file size pre-fetch
-            - Steam Workshop collection download with nested collection support
-            - Mod Library browser with preview images, descriptions, sort and filter
-            - Mod Update Checker via Steam API with auto-check on startup option
-            - Startup Analysis tab in Log Viewer showing phase timings and peak memory
-            - Multi-version RimWorld support via per-instance executable override
-            - Prism-style collapsible instance groups with drag-drop
-            - Save rename and delete from Edit Instance
-            - alternativePackageIds support for dependency satisfaction
-            - RimWorld 1.6 plain XML save format support for compatibility badges
-            - Light theme improvements throughout
-            - Linux and Steam Deck path detection
+            - You're now able to load mods from a save through right clicking on the instance, edit and saves tab
+            - Able to see what mods are added on a specific save from the list that you have
+            - Download mods from a save file
 
-            ### Downloads
-            | Platform | File |
-            |---|---|
-            | Windows | `OnyxLauncher-Beta-windows.zip` |
-            | Linux | `OnyxLauncher-Beta-linux.zip` |
-            | macOS | `OnyxLauncher-Beta-macos.zip` |
+            ### Fixes
+            - Fixed some UI bugs
+            - Fixed bugs when updating mods
 
-            ### Installation
-            1. Download the zip for your platform
-            2. Extract anywhere
-            3. Run `OnyxLauncher.exe` (Windows) or `OnyxLauncher` (Linux/Mac)
 
-            ### Notes
-            - First launch may take a few seconds while Qt initializes
-            - Linux and macOS users may need to run `chmod +x OnyxLauncher` first
-            - Non-Steam RimWorld is fully supported via SteamCMD
-            - Steam Deck is supported — auto-detection includes Flatpak and native Steam paths
+
           files: |
             artifacts/windows-build/*.zip
             artifacts/linux-build/*.zip

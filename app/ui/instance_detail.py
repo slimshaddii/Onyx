@@ -58,6 +58,7 @@ class InstanceDetailPanel(QWidget):
 
         content = QWidget()
         lo = QVBoxLayout(content)
+        lo.setContentsMargins(0, 0, 0, 0)
         lo.setSpacing(10)
 
         self.header  = DetailHeader(self)
@@ -97,7 +98,8 @@ class InstanceDetailPanel(QWidget):
         self._check_untracked_playtime(inst)
 
     def _check_untracked_playtime(self, inst: Instance):
-        """Detect and record playtime from sessions outside the launcher."""
+        """Detect and record playtime from sessions outside the
+        launcher."""
         log_path = inst.path / 'Player.log'
         if not log_path.exists():
             return

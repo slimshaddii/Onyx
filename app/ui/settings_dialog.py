@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QGroupBox, QGridLayout, QFileDialog,
     QCheckBox, QSpinBox, QListWidget, QComboBox, QTextEdit,
+    QLayout,
 )
 
 from app.core.app_settings import AppSettings
@@ -21,7 +22,6 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.s = dict(settings)
         self.setWindowTitle("Settings — Onyx Launcher")
-        self.setMinimumWidth(620)
         self._build()
         self._load()
 
@@ -40,6 +40,7 @@ class SettingsDialog(QDialog):
         g1 = QGroupBox("Paths")
         gl = QGridLayout()
         gl.setVerticalSpacing(6)
+        gl.setColumnStretch(1, 1)
 
         gl.addWidget(QLabel("RimWorld exe:"), 0, 0)
         self.exe = QLineEdit()
@@ -49,7 +50,8 @@ class SettingsDialog(QDialog):
         gl.addWidget(QLabel("Data folder:"), 1, 0)
         self.data = QLineEdit()
         self.data.setPlaceholderText(str(get_default_data_root()))
-        self.data.setToolTip("Root folder for instances, mods, icons, logs")
+        self.data.setToolTip(
+            "Root folder for instances, mods, icons, logs")
         gl.addWidget(self.data, 1, 1)
         gl.addWidget(self._browse_btn(self.data, file=False), 1, 2)
 
@@ -64,6 +66,7 @@ class SettingsDialog(QDialog):
         g2 = QGroupBox("Workshop Downloads")
         g2l = QGridLayout()
         g2l.setVerticalSpacing(6)
+        g2l.setColumnStretch(1, 1)
 
         g2l.addWidget(QLabel("Method:"), 0, 0)
         self.method = QComboBox()
@@ -90,12 +93,14 @@ class SettingsDialog(QDialog):
         g2l.addWidget(QLabel("API key:"), 4, 0)
         self.api = QLineEdit()
         self.api.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api.setPlaceholderText("Optional — for workshop search")
+        self.api.setPlaceholderText(
+            "Optional — for workshop search")
         g2l.addWidget(self.api, 4, 1)
         qb = QPushButton("?")
         qb.setFixedWidth(28)
         qb.clicked.connect(
-            lambda: webbrowser.open("https://steamcommunity.com/dev/apikey"))
+            lambda: webbrowser.open(
+                "https://steamcommunity.com/dev/apikey"))
         g2l.addWidget(qb, 4, 2)
 
         g2.setLayout(g2l)
@@ -112,7 +117,8 @@ class SettingsDialog(QDialog):
         pr.addWidget(ab)
         rb = QPushButton("Remove")
         rb.clicked.connect(
-            lambda: self.paths_list.takeItem(self.paths_list.currentRow())
+            lambda: self.paths_list.takeItem(
+                self.paths_list.currentRow())
             if self.paths_list.currentRow() >= 0 else None)
         pr.addWidget(rb)
         pr.addStretch()
@@ -141,9 +147,10 @@ class SettingsDialog(QDialog):
 
         g5l.addWidget(QLabel("Mod updates:"))
         self.update_cb = QComboBox()
-        self.update_cb.addItem("Check on startup (background)", "auto")
-        self.update_cb.addItem("Manual only",                   "manual")
-        self.update_cb.addItem("Disabled",                      "disabled")
+        self.update_cb.addItem(
+            "Check on startup (background)", "auto")
+        self.update_cb.addItem("Manual only", "manual")
+        self.update_cb.addItem("Disabled",    "disabled")
         g5l.addWidget(self.update_cb)
         g5l.addStretch()
         g5.setLayout(g5l)
@@ -158,8 +165,14 @@ class SettingsDialog(QDialog):
         btns = QHBoxLayout()
         btns.addStretch()
         btns.addWidget(self._btn("Cancel", self.reject))
-        btns.addWidget(self._btn("Save", self._save, primary=True))
+        btns.addWidget(
+            self._btn("Save", self._save, primary=True))
         lo.addLayout(btns)
+
+        # Fixed size: dialog auto-fits its content and cannot be
+        # resized. SetFixedSize also triggers adjustSize() when
+        # det_log visibility changes, so no manual resize is needed.
+        lo.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
 
     def _btn(self, text, slot, primary=False):
         b = QPushButton(text)
@@ -172,9 +185,11 @@ class SettingsDialog(QDialog):
         b = QPushButton("…")
         b.setFixedWidth(28)
         if file:
-            b.clicked.connect(lambda: self._browse_file(target))
+            b.clicked.connect(
+                lambda: self._browse_file(target))
         else:
-            b.clicked.connect(lambda: self._browse_dir(target))
+            b.clicked.connect(
+                lambda: self._browse_dir(target))
         return b
 
     def _browse_file(self, t):
@@ -182,17 +197,20 @@ class SettingsDialog(QDialog):
             filt = "Exe (*.exe);;All Files (*)"
         else:
             filt = "All Files (*)"
-        p, _ = QFileDialog.getOpenFileName(self, "Select", "", filt)
+        p, _ = QFileDialog.getOpenFileName(
+            self, "Select", "", filt)
         if p:
             t.setText(p)
 
     def _browse_dir(self, t):
-        p = QFileDialog.getExistingDirectory(self, "Select folder")
+        p = QFileDialog.getExistingDirectory(
+            self, "Select folder")
         if p:
             t.setText(p)
 
     def _add_path(self):
-        p = QFileDialog.getExistingDirectory(self, "Add mod folder")
+        p = QFileDialog.getExistingDirectory(
+            self, "Add mod folder")
         if p:
             self.paths_list.addItem(p)
 
@@ -200,14 +218,19 @@ class SettingsDialog(QDialog):
         self.exe.setText(self.s.get('rimworld_exe', ''))
         self.data.setText(self.s.get('data_root', ''))
         self.cmd.setText(self.s.get('steamcmd_path', ''))
-        self.cmd_user.setText(self.s.get('steamcmd_username', ''))
-        self.ws.setText(self.s.get('steam_workshop_path', ''))
+        self.cmd_user.setText(
+            self.s.get('steamcmd_username', ''))
+        self.ws.setText(
+            self.s.get('steam_workshop_path', ''))
         self.api.setText(self.s.get('steam_api_key', ''))
-        self.bk.setChecked(self.s.get('auto_backup_on_launch', True))
+        self.bk.setChecked(
+            self.s.get('auto_backup_on_launch', True))
         self.bk_n.setValue(self.s.get('backup_count', 3))
-        self.copy_cb.setCurrentIndex(1 if self.s.get('is_steam_copy') else 0)
+        self.copy_cb.setCurrentIndex(
+            1 if self.s.get('is_steam_copy') else 0)
         self.method.setCurrentIndex(
-            1 if self.s.get('download_method') == 'steam_native' else 0)
+            1 if self.s.get(
+                'download_method') == 'steam_native' else 0)
         for p in self.s.get('extra_mod_paths', []):
             self.paths_list.addItem(p)
         mode = AppSettings.instance().update_check_mode
@@ -222,32 +245,40 @@ class SettingsDialog(QDialog):
             self.det_log.append(f"  {line}")
         if r.found_rimworld:
             self.exe.setText(r.rimworld_exe)
-            self.copy_cb.setCurrentIndex(1 if r.is_steam_copy else 0)
-            self.method.setCurrentIndex(1 if r.is_steam_copy else 0)
+            self.copy_cb.setCurrentIndex(
+                1 if r.is_steam_copy else 0)
+            self.method.setCurrentIndex(
+                1 if r.is_steam_copy else 0)
         if r.steam_workshop_path:
             self.ws.setText(r.steam_workshop_path)
         if r.steamcmd_path:
             self.cmd.setText(r.steamcmd_path)
         if r.extra_mod_paths:
-            existing = {self.paths_list.item(i).text()
-                        for i in range(self.paths_list.count())}
+            existing = {
+                self.paths_list.item(i).text()
+                for i in range(self.paths_list.count())}
             for p in r.extra_mod_paths:
                 if p not in existing:
                     self.paths_list.addItem(p)
         self.det_log.append(
-            "\n✅ Done" if r.found_rimworld else "\n⚠ RimWorld not found")
+            "\n✅ Done"
+            if r.found_rimworld
+            else "\n⚠ RimWorld not found")
 
     def _save(self):
         self.s['rimworld_exe']        = self.exe.text().strip()
-        self.s['data_root']           = (self.data.text().strip()
-                                         or str(get_default_data_root()))
+        self.s['data_root']           = (
+            self.data.text().strip()
+            or str(get_default_data_root()))
         self.s['steamcmd_path']       = self.cmd.text().strip()
-        self.s['steamcmd_username']   = self.cmd_user.text().strip()
+        self.s['steamcmd_username']   = (
+            self.cmd_user.text().strip())
         self.s['steam_workshop_path'] = self.ws.text().strip()
         self.s['steam_api_key']       = self.api.text().strip()
         self.s['auto_backup_on_launch'] = self.bk.isChecked()
         self.s['backup_count']        = self.bk_n.value()
-        self.s['is_steam_copy']       = self.copy_cb.currentIndex() == 1
+        self.s['is_steam_copy']       = (
+            self.copy_cb.currentIndex() == 1)
         self.s['download_method']     = self.method.currentData()
         self.s['extra_mod_paths']     = [
             self.paths_list.item(i).text()

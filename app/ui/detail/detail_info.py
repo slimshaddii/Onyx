@@ -30,7 +30,8 @@ class DetailInfo(QWidget):
     """
     Displays a Details grid with instance metadata and a missing-mods warning.
 
-    The Instance Size field is populated asynchronously to avoid blocking the UI.
+    The Instance Size field is populated asynchronously to avoid blocking
+    the UI.
     """
 
     def __init__(self, parent=None):
@@ -42,13 +43,16 @@ class DetailInfo(QWidget):
         det_group = QGroupBox("Details")
         grid      = QGridLayout()
         grid.setVerticalSpacing(6)
+        grid.setColumnStretch(1, 1)
 
         self._labels: dict[str, QLabel] = {}
         c = get_colors(AppSettings.instance().theme)
         for row, key in enumerate(_ROWS):
             lbl = QLabel(f"{key}:")
-            lbl.setStyleSheet(f"font-weight:bold; color:{c['text_dim']};")
+            lbl.setStyleSheet(
+                f"font-weight:bold; color:{c['text_dim']};")
             val = QLabel("—")
+            val.setWordWrap(True)
             grid.addWidget(lbl, row, 0)
             grid.addWidget(val, row, 1)
             self._labels[key] = val
@@ -57,20 +61,25 @@ class DetailInfo(QWidget):
         lo.addWidget(det_group)
 
         self.missing_label = QLabel("")
-        self.missing_label.setStyleSheet("color:#c62828; font-weight:bold;")
+        self.missing_label.setStyleSheet(
+            "color:#c62828; font-weight:bold;")
         self.missing_label.setWordWrap(True)
         self.missing_label.hide()
         lo.addWidget(self.missing_label)
 
-    def set_instance(self, inst: Instance, rw: RimWorldDetector | None) -> None:
-        """Populate all fields from inst, triggering an async size calculation."""
+    def set_instance(
+            self, inst: Instance,
+            rw: RimWorldDetector | None) -> None:
+        """Populate all fields from inst, triggering an async size
+        calculation."""
         d = self._labels
         d['Version'].setText(inst.rimworld_version or '—')
         d['Active Mods'].setText(str(inst.mod_count))
         d['Inactive Mods'].setText(str(len(inst.inactive_mods)))
         d['Save Files'].setText(str(inst.save_count))
         d['Created'].setText(_fmt_date(inst.created))
-        d['Last Played'].setText(_fmt_date(inst.last_played) or 'Never')
+        d['Last Played'].setText(
+            _fmt_date(inst.last_played) or 'Never')
         h, m = divmod(inst.total_playtime_minutes, 60)
         d['Playtime'].setText(f"{h}h {m}m" if h else f"{m}m")
 
@@ -84,7 +93,8 @@ class DetailInfo(QWidget):
         self.missing_label.hide()
 
     def _start_size_calc(self, path, size_label: QLabel) -> None:
-        """Calculate folder size on a daemon thread and update size_label on completion."""
+        """Calculate folder size on a daemon thread and update
+        size_label on completion."""
         size_label.setText('…')
 
         def _calc():
@@ -96,14 +106,19 @@ class DetailInfo(QWidget):
 
         threading.Thread(target=_calc, daemon=True).start()
 
-    def _update_missing(self, inst: Instance, rw: RimWorldDetector | None) -> None:
+    def _update_missing(
+            self, inst: Instance,
+            rw: RimWorldDetector | None) -> None:
         if rw and inst.mods:
             missing = rw.find_missing_mods(inst.mods)
             if missing:
                 short = ", ".join(missing[:8])
-                extra = f" +{len(missing) - 8} more" if len(missing) > 8 else ""
+                extra = (
+                    f" +{len(missing) - 8} more"
+                    if len(missing) > 8 else "")
                 self.missing_label.setText(
-                    f"⚠ {len(missing)} mod(s) missing: {short}{extra}")
+                    f"⚠ {len(missing)} mod(s) missing: "
+                    f"{short}{extra}")
                 self.missing_label.show()
                 return
         self.missing_label.hide()
@@ -113,6 +128,7 @@ def _fmt_date(iso: str) -> str:
     if not iso:
         return ''
     try:
-        return datetime.fromisoformat(iso).strftime("%b %d, %Y  %H:%M")
+        return datetime.fromisoformat(iso).strftime(
+            "%b %d, %Y  %H:%M")
     except (ValueError, TypeError):
         return iso[:16]

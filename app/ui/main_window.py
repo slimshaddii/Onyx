@@ -44,6 +44,11 @@ from app.ui.styles import (
     DARK_STYLESHEET, LIGHT_STYLESHEET,
 )
 
+# Fixed pixel width for every toolbar action button.
+# 10 buttons × 100px + 4 separators × 5px + 12px padding = 1032px,
+# so setMinimumSize(1060, …) guarantees all buttons are always visible.
+_TOOLBAR_BTN_WIDTH = 100
+
 
 # ── MainWindow ───────────────────────────────────────
 
@@ -86,7 +91,10 @@ class MainWindow(QMainWindow):
             w.get('x', 80), w.get('y', 60),
             w.get('width', 1200),
             w.get('height', 720))
-        self.setMinimumSize(760, 440)
+        # Minimum width keeps all toolbar buttons visible (1032px of
+        # buttons/separators) and fits the 520px detail panel + 300px
+        # grid minimum.
+        self.setMinimumSize(1060, 500)
 
         self.rw = RimWorldDetector()
         self._init_rw()
@@ -201,9 +209,16 @@ class MainWindow(QMainWindow):
             max_age_seconds=0)
 
     def _update_watcher_paths(self):
+        watch_paths = list(self.settings.get(
+            'extra_mod_paths', []))
+        dr = self.settings.get('data_root', '')
+        if dr:
+            onyx_mods = str(
+                mods_dir(Path(dr)))
+            if onyx_mods not in watch_paths:
+                watch_paths.append(onyx_mods)
         self._mod_watcher.update_paths(
-            extra_mod_paths=self.settings.get(
-                'extra_mod_paths', []),
+            extra_mod_paths=watch_paths,
             steam_workshop_path=self.settings.get(
                 'steam_workshop_path', ''),
             rimworld_exe=self.settings.get(
@@ -261,6 +276,22 @@ class MainWindow(QMainWindow):
 
     # ── Toolbar ──────────────────────────────────
 
+    def _tb_action(
+            self, tb: QToolBar,
+            label: str, slot) -> QAction:
+        """Add a fixed-width action button to the toolbar.
+
+        Creates the QAction, adds it to *tb*, then pins the
+        resulting QToolButton to _TOOLBAR_BTN_WIDTH so all
+        buttons are uniform regardless of label length.
+        """
+        act = QAction(label, self, triggered=slot)
+        tb.addAction(act)
+        btn = tb.widgetForAction(act)
+        if btn:
+            btn.setFixedWidth(_TOOLBAR_BTN_WIDTH)
+        return act
+
     def _build_toolbar(self):
         tb = QToolBar()
         tb.setMovable(False)
@@ -269,45 +300,28 @@ class MainWindow(QMainWindow):
             Qt.ToolButtonStyle
             .ToolButtonTextBesideIcon)
         self.addToolBar(tb)
-        tb.addAction(QAction(
-            "➕ Add Instance", self,
-            triggered=self._on_new))
-        tb.addAction(QAction(
-            "◆ Import .onyx", self,
-            triggered=self._on_import_pack))
+
+        self._tb_action(tb, "➕ Add Instance",  self._on_new)
+        self._tb_action(tb, "◆ Import .onyx",   self._on_import_pack)
         tb.addSeparator()
-        tb.addAction(QAction(
-            "🏪 Workshop", self,
-            triggered=self._on_workshop))
-        tb.addAction(QAction(
-            "📋 Logs", self,
-            triggered=self._on_logs))
+        self._tb_action(tb, "🏪 Workshop",       self._on_workshop)
+        self._tb_action(tb, "📋 Logs",           self._on_logs)
         tb.addSeparator()
-        tb.addAction(QAction(
-            "Downloads", self,
-            triggered=self._on_downloads))
-        tb.addAction(QAction(
-            "Library", self,
-            triggered=self._on_library))
-        tb.addAction(QAction(
-            "Check Updates", self,
-            triggered=self._on_check_updates))
+        self._tb_action(tb, "Downloads",         self._on_downloads)
+        self._tb_action(tb, "Library",           self._on_library)
+        self._tb_action(tb, "Check Updates",     self._on_check_updates)
         tb.addSeparator()
-        tb.addAction(QAction(
-            "⟳ Refresh", self,
-            triggered=self.refresh))
+        self._tb_action(tb, "⟳ Refresh",         self.refresh)
+
         spacer = QWidget()
         spacer.setObjectName("toolbarSpacer")
         spacer.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
-        tb.addAction(QAction(
-            "🔍 Find Mod", self,
-            triggered=self._on_find_mod))
-        tb.addAction(QAction(
-            "⚙ Settings", self,
-            triggered=self._on_settings))
+
+        self._tb_action(tb, "🔍 Find Mod",       self._on_find_mod)
+        self._tb_action(tb, "⚙ Settings",        self._on_settings)
 
     # ── UI Construction ──────────────────────────
 
@@ -358,10 +372,10 @@ class MainWindow(QMainWindow):
             self._on_export_pack)
         self.detail.instance_updated.connect(
             self.refresh)
-        self.detail.setMinimumWidth(280)
+        self.detail.setFixedWidth(520)
         sp.addWidget(self.detail)
 
-        sp.setSizes([400, 800])
+        sp.setSizes([680, 520])
         lo.addWidget(sp)
 
     def _build_statusbar(self):
@@ -613,8 +627,9 @@ class MainWindow(QMainWindow):
             _is_steam_copy=self.settings.get(
                 'is_steam_copy', False),
             settings=self.settings)
-        dlg.destroyed.connect(
-            lambda: self._on_child_closed(dlg))
+        dlg.finished.connect(
+            lambda _result:
+                self._on_child_closed(dlg))
         self._open_child(dlg)
 
     def _on_child_closed(self, dlg):

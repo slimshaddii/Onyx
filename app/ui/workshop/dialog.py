@@ -634,6 +634,8 @@ class WorkshopBrowserDialog(QDialog):
 
     # ── Signal Handlers ──────────────────────────
 
+        # ── Signal Handlers ──────────────────────────
+
     def _on_started(self, _wid, title):
         self.status_lbl.setText(
             f"Downloading: {title}")
@@ -652,6 +654,7 @@ class WorkshopBrowserDialog(QDialog):
             self.status_lbl.setText(
                 f"Done: {wid}")
             self._link_mod(wid)
+            self._rescan_rw()
             self._inject()
             QTimer.singleShot(
                 500, self._inject)
@@ -676,6 +679,37 @@ class WorkshopBrowserDialog(QDialog):
         dst = Path(exe).parent / 'Mods'
         if src.exists():
             link_mod_to_game(src, dst)
+    
+    def _rescan_rw(self):
+        """Rescan installed mods so the shared
+        cache reflects recent downloads."""
+        if not self.rw:
+            return
+        paths: list[str] = []
+        dr = self._settings.get(
+            'data_root', '')
+        if dr:
+            paths.append(
+                str(Path(dr) / 'mods'))
+        ws = self._settings.get(
+            'steam_workshop_path', '')
+        if ws and ws not in paths:
+            paths.append(ws)
+        exe = self._settings.get(
+            'rimworld_exe', '')
+        if exe:
+            gm = str(
+                Path(exe).parent / 'Mods')
+            if gm not in paths:
+                paths.append(gm)
+        for p in self._settings.get(
+                'extra_mod_paths', []):
+            if p not in paths:
+                paths.append(p)
+        self.rw.get_installed_mods(
+            extra_mod_paths=paths,
+            force_rescan=True,
+            max_age_seconds=0)
 
     def _refresh_sidebar(self):
         pass

@@ -557,13 +557,11 @@ class InstanceGridPanel(QWidget):
         self._rebuild()
 
     def _rebuild(self):
-        self.gc.setVisible(False)
-
         while self._content_lo.count() > 1:
             item = self._content_lo.takeAt(0)
             w = item.widget()
             if w:
-                w.setParent(None)
+                w.hide()
                 w.deleteLater()
         self._cards.clear()
 
@@ -597,7 +595,6 @@ class InstanceGridPanel(QWidget):
 
         self.cnt.setText(
             f"{len(filt)}/{len(self.instances)}")
-        self.gc.setVisible(True)
 
     def _rebuild_flat(
             self, instances: list[Instance],
@@ -668,7 +665,6 @@ class InstanceGridPanel(QWidget):
                 self._show_context,
                 drop_callback=(
                     self._on_card_dropped))
-            grid.setVisible(not is_collapsed)
 
             # pylint: disable=protected-access
             for i in range(grid._layout.count()):
@@ -680,6 +676,7 @@ class InstanceGridPanel(QWidget):
 
             self._content_lo.insertWidget(
                 insert_pos, grid)
+            grid.setVisible(not is_collapsed)
             insert_pos += 1
 
         if (ungrouped
@@ -706,7 +703,6 @@ class InstanceGridPanel(QWidget):
                 self._show_context,
                 drop_callback=(
                     self._on_card_dropped))
-            grid.setVisible(not is_collapsed)
             # pylint: disable=protected-access
             for i in range(grid._layout.count()):
                 w = grid._layout.itemAt(
@@ -716,6 +712,7 @@ class InstanceGridPanel(QWidget):
             # pylint: enable=protected-access
             self._content_lo.insertWidget(
                 insert_pos, grid)
+            grid.setVisible(not is_collapsed)
 
     def _on_group_toggle(self, group_name: str,
                          is_collapsed: bool):
