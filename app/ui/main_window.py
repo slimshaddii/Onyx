@@ -44,13 +44,10 @@ from app.ui.styles import (
     DARK_STYLESHEET, LIGHT_STYLESHEET,
 )
 
-# Fixed pixel width for every toolbar action button.
-# 10 buttons × 100px + 4 separators × 5px + 12px padding = 1032px,
-# so setMinimumSize(1060, …) guarantees all buttons are always visible.
 _TOOLBAR_BTN_WIDTH = 100
 
 
-# ── MainWindow ───────────────────────────────────────
+# ── MainWindow ───────────────────────────────────
 
 class MainWindow(QMainWindow):
     """Main application window for Onyx Launcher."""
@@ -91,9 +88,6 @@ class MainWindow(QMainWindow):
             w.get('x', 80), w.get('y', 60),
             w.get('width', 1200),
             w.get('height', 720))
-        # Minimum width keeps all toolbar buttons visible (1032px of
-        # buttons/separators) and fits the 520px detail panel + 300px
-        # grid minimum.
         self.setMinimumSize(1060, 500)
 
         self.rw = RimWorldDetector()
@@ -279,12 +273,8 @@ class MainWindow(QMainWindow):
     def _tb_action(
             self, tb: QToolBar,
             label: str, slot) -> QAction:
-        """Add a fixed-width action button to the toolbar.
-
-        Creates the QAction, adds it to *tb*, then pins the
-        resulting QToolButton to _TOOLBAR_BTN_WIDTH so all
-        buttons are uniform regardless of label length.
-        """
+        """Add a fixed-width action button to
+        the toolbar."""
         act = QAction(label, self, triggered=slot)
         tb.addAction(act)
         btn = tb.widgetForAction(act)
@@ -301,17 +291,27 @@ class MainWindow(QMainWindow):
             .ToolButtonTextBesideIcon)
         self.addToolBar(tb)
 
-        self._tb_action(tb, "➕ Add Instance",  self._on_new)
-        self._tb_action(tb, "◆ Import .onyx",   self._on_import_pack)
+        self._tb_action(
+            tb, "➕ Add Instance", self._on_new)
+        self._tb_action(
+            tb, "◆ Import .onyx",
+            self._on_import_pack)
         tb.addSeparator()
-        self._tb_action(tb, "🏪 Workshop",       self._on_workshop)
-        self._tb_action(tb, "📋 Logs",           self._on_logs)
+        self._tb_action(
+            tb, "🏪 Workshop", self._on_workshop)
+        self._tb_action(
+            tb, "📋 Logs", self._on_logs)
         tb.addSeparator()
-        self._tb_action(tb, "Downloads",         self._on_downloads)
-        self._tb_action(tb, "Library",           self._on_library)
-        self._tb_action(tb, "Check Updates",     self._on_check_updates)
+        self._tb_action(
+            tb, "Downloads", self._on_downloads)
+        self._tb_action(
+            tb, "Library", self._on_library)
+        self._tb_action(
+            tb, "Check Updates",
+            self._on_check_updates)
         tb.addSeparator()
-        self._tb_action(tb, "⟳ Refresh",         self.refresh)
+        self._tb_action(
+            tb, "⟳ Refresh", self.refresh)
 
         spacer = QWidget()
         spacer.setObjectName("toolbarSpacer")
@@ -320,8 +320,10 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
 
-        self._tb_action(tb, "🔍 Find Mod",       self._on_find_mod)
-        self._tb_action(tb, "⚙ Settings",        self._on_settings)
+        self._tb_action(
+            tb, "🔍 Find Mod", self._on_find_mod)
+        self._tb_action(
+            tb, "⚙ Settings", self._on_settings)
 
     # ── UI Construction ──────────────────────────
 
@@ -491,9 +493,11 @@ class MainWindow(QMainWindow):
     def _on_edit(self, inst):
         from app.ui.instance_edit import InstanceEditDialog  # pylint: disable=import-outside-toplevel
         dlg = InstanceEditDialog(
-            None, inst, self.rw)
-        dlg.instance_changed.connect(self.refresh)
-        self._open_child(dlg)
+            self, inst, self.rw)
+        if dlg.exec():
+            self.refresh()
+        elif dlg.inst != inst:
+            self.refresh()
 
     def _on_edit_mods(self, inst):
         from app.ui.modeditor import ModEditorDialog  # pylint: disable=import-outside-toplevel
